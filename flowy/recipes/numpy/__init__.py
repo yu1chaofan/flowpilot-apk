@@ -84,6 +84,11 @@ class NumpyCompatRecipe(NumpyRecipe):
             fp = [n for n in hp if 'fpmath' in n]
             info('numpy: include/numpy has {} headers, fpmath={}'.format(
                 len(hp), fp))
+        # Expand the .src templates in place first: the mirror step copies
+        # whatever headers exist, and the generated ones only appear after
+        # this runs.
+        self._expand_c_templates(base, info)
+
         # Mirror every header first: npy_math_private.h transitively includes
         # npy_config.h and npy_fpmath.h, so staging only the one current error
         # names would just move the failure one include further down.
@@ -196,6 +201,64 @@ class NumpyCompatRecipe(NumpyRecipe):
                         except OSError:
                             pass
         info('numpy: mirrored {} headers into build/src.*'.format(copied))
+
+    @staticmethod
+    def _expand_c_templates(base, info):
+        """Expand numpy's .h.src / .c.src templates in the source tree.
+
+        numpy runs every npymath header and source through
+        numpy.distutils.conv_template.process_file() during build_src, turning
+        the @TYPE@/@@ markers into the concrete C. That pass emits nothing in
+        this build, so the compiler ends up reading the raw templates:
+
+            npy_math_internal.h.src:599:
+            #define NPY__FP_SFX(X) NPY_CAT(X, f)
+
+        which fails because the generated half of the file (the part that
+        defines NPY_CAT and the per-precision symbol names) never exists.
+
+        process_file(path) rewrites the file in place when called with one
+        argument, which is exactly what numpy's own build does; call it on a
+        copy so the pristine template stays available for the next run.
+        """
+        import os
+        import shutil
+
+        conv = os.path.join(base, 'numpy', 'distutils', 'conv_template.py')
+        if not os.path.exists(conv):
+            info('numpy: conv_template.py missing, cannot expand templates')
+            return
+
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('_np_conv', conv)
+        mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as exc:
+            info('numpy: conv_template import failed: {}'.format(exc))
+            return
+
+        expanded = 0
+        for root in ('include', 'src'):
+            top = os.path.join(base, 'numpy', 'core', root)
+            if not os.path.isdir(top):
+                continue
+            for dirpath, _dirnames, filenames in os.walk(top):
+                for name in filenames:
+                    if not name.endswith(('.h.src', '.c.src')):
+                        continue
+                    src = os.path.join(dirpath, name)
+                    dst = src[:-4]  # strip .src
+                    if os.path.exists(dst) and name.endswith('.h.src'):
+                        # A plain header may already exist and take precedence.
+                        continue
+                    try:
+                        shutil.copyfile(src, dst)
+                        mod.process_file(dst)
+                        expanded += 1
+                    except Exception as exc:
+                        info('numpy: template {} failed: {}'.format(name, exc))
+        info('numpy: expanded {} .src templates'.format(expanded))
 
     @staticmethod
     def _write_npy_fpmath_h(base, info):

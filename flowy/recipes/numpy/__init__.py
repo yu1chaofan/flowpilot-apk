@@ -183,6 +183,7 @@ class NumpyCompatRecipe(NumpyRecipe):
         # npy_config.h and npy_fpmath.h, so staging only the one current error
         # names would just move the failure one include further down.
         self._mirror_numpy_headers(base, info)
+        self._mirror_numpy_sources(base, info)
 
         source = None
         for name in ('npy_math_private.h', 'npy_math_private.h.src'):
@@ -237,6 +238,54 @@ class NumpyCompatRecipe(NumpyRecipe):
         self._write_npy_fpmath_h(base, info)
         self._write_config_h(base, info)
         self._write_numpyconfig_h(base, info)
+
+    @staticmethod
+    def _mirror_numpy_sources(base, info):
+        """Mirror every numpy/core/{include,src} file into build/src.<plat>/.
+
+        numpy's build plan compiles objects from build/src.<plat>/numpy/core/...,
+        because build_src normally populates that tree by copying the core
+        sources (and their generated forms) into it. With that pass inert the
+        compile step has nothing to chew on and the link fails with dozens of:
+
+            error: no such file or directory:
+              'build/temp.../numpy/core/src/umath/_umath_tests.o'
+
+        Mirroring the whole tree is the same thing build_src would do, just
+        without its probe bookkeeping.
+        """
+        import os
+        import shutil
+
+        build_root = os.path.join(base, 'build')
+        if not os.path.isdir(build_root):
+            return
+        dest_roots = [os.path.join(build_root, e) for e in os.listdir(build_root)
+                      if e.startswith('src.')]
+        if not dest_roots:
+            return
+        copied = 0
+        for sub in ('include', 'src'):
+            top = os.path.join(base, 'numpy', 'core', sub)
+            if not os.path.isdir(top):
+                continue
+            for dirpath, _dirnames, filenames in os.walk(top):
+                inner = os.path.relpath(dirpath, os.path.join(
+                    base, 'numpy', 'core'))
+                for name in filenames:
+                    if name.endswith('.orig') or name.endswith('.pyc'):
+                        continue
+                    source = os.path.join(dirpath, name)
+                    for dest_root in dest_roots:
+                        out_dir = os.path.join(dest_root, 'numpy', 'core', inner)
+                        os.makedirs(out_dir, exist_ok=True)
+                        dst = os.path.join(out_dir, name)
+                        try:
+                            shutil.copyfile(source, dst)
+                            copied += 1
+                        except OSError:
+                            pass
+        info('numpy: mirrored {} files into build/src.*'.format(copied))
 
     @staticmethod
     def _mirror_numpy_headers(base, info):

@@ -56,3 +56,27 @@
              cxx_objects = cxx_compiler.compile(
                  cxx_sources,
                  output_dir=self.build_temp,
+
+
+--- a/numpy/distutils/command/build_ext.py
++++ b/numpy/distutils/command/build_ext.py
+@@ -135,7 +135,17 @@
+         if self.distribution.has_c_libraries() and not self.skip_build:
+             self.run_command('build_clib')
+         build_ext.build_ext.run(self)
+-        self.compiler.customize(self.distribution)
++        # Same missing-method situation as build_clib.py: numpy.distutils
++        # attaches customize() to its own CCompiler via replace_method, while
++        # the compiler object handed to this command may be plain setuptools'
++        # UnixCCompiler:
++        #   AttributeError: 'UnixCCompiler' object has no attribute 'customize'
++        # distutils' customize_compiler() is the underlying work; numpy's
++        # wrapper only records bookkeeping on top of it.
++        _customize = getattr(self.compiler, 'customize', None)
++        if _customize is not None:
++            _customize(self.distribution)
++        else:
++            from distutils.sysconfig import customize_compiler
++            customize_compiler(self.compiler)
+         if self.distribution.get_name() == 'numpy' and self.fcompiler:
+             self.fcompiler.customize(self.distribution)

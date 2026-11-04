@@ -371,23 +371,11 @@ class NumpyCompatRecipe(NumpyRecipe):
 #define HAVE_C99_INFINITY 1
 #define HAVE_C99_NAN 1
 
-/* x86-only intrinsics must stay off on arm64. */
-#define HAVE_XMMINTRIN_H 0
-#define HAVE_EMMINTRIN_H 0
-#define HAVE_IMMINTRIN_H 0
-#define HAVE__MM_LOAD_PS 0
-#define HAVE__MM_LOAD_PD 0
-#define HAVE__MM_PREFETCH 0
-#define HAVE__M_FROM_INT64 0
-
-#define NPY_HAVE_SSE2_INTRINSICS 0
-#define NPY_HAVE_SSE_INTRINSICS 0
-#define NPY_HAVE_MMX_INTRINSICS 0
-#define NPY_HAVE_AVX_INTRINSICS 0
-#define NPY_HAVE_FMA3_INTRINSICS 0
-#define NPY_HAVE_FMA4_INTRINSICS 0
-#define NPY_HAVE_AVX2_INTRINSICS 0
-#define NPY_HAVE_AVX512F_INTRINSICS 0
+/* x86-only intrinsics stay off on arm64 by REMAINING UNDEFINED.
+   npy_common.h tests these with #ifdef, not #if, so a `#define ... 0` would
+   read as "present" and drag in <xmmintrin.h>/<immintrin.h>:
+       npy_common.h:87: "NPY_HAVE_SSE_INTRINSICS" macro redefined
+   and then the x86 headers fail to compile for aarch64. */
 
 #define NPY_POLYLIKE 1
 #define NPY_USE_C99_COMPLEX 1

@@ -91,23 +91,22 @@ jobs:
             appdirs colorama jinja2 "sh>=1.10,<2.0" build toml packaging \
             virtualenv
           buildozer --version
-
-          # buildozer shells out to `python -m pip install --user <deps>` for its
-          # own prerequisites. Inside a venv pip hard-fails:
-          #   ERROR: Can not perform a '--user' install.
-          #   User site-packages are not visible in this virtualenv.
-          # PIP_USER=0 does NOT help (the flag is explicit on the command line),
-          # so shadow `pip` with a wrapper that drops --user. The deps are
-          # already installed above, making the later calls no-ops.
-          # Written via base64 so the YAML block indentation cannot leak into
-          # the script body.
-          WRAPPER='IyEvYmluL2Jhc2gKIyBTdHJpcCAtLXVzZXI6IGEgdmVudiBoYXMgbm8gdmlzaWJsZSB1c2VyIHNpdGUtcGFja2FnZXMuCmFyZ3M9KCkKZm9yIGEgaW4gIiRAIjsgZG8KICBbICIkYSIgPSAiLS11c2VyIiBdIHx8IGFyZ3MrPSgiJGEiKQpkb25lCmV4ZWMgIiRIT01FLy52ZW52L2Jpbi9weXRob24iIC1tIHBpcCAiJHthcmdzW0BdfSIK'
-          echo "$WRAPPER" | base64 -d > "$HOME/.venv/bin/pip"
-          chmod +x "$HOME/.venv/bin/pip"
-          "$HOME/.venv/bin/pip" --version
-
           echo "PATH=$HOME/.venv/bin:$PATH" >> "$GITHUB_ENV"
           echo "PIP_NO_INPUT=1" >> "$GITHUB_ENV"
+          # buildozer's ensure_p4a_dependencies() does:
+          #     options = ["--user"]
+          #     if "VIRTUAL_ENV" in os.environ or "CONDA_PREFIX" in os.environ:
+          #         options = []
+          #     <python> -m pip install -q *options <deps>
+          # `source venv/bin/activate` sets VIRTUAL_ENV only for the current
+          # shell step; each Actions `run:` is a fresh shell, so buildozer ran
+          # without it and added --user, which pip rejects inside a venv:
+          #   ERROR: Can not perform a '--user' install.
+          # Exporting it through GITHUB_ENV keeps the venv visible to every
+          # later step -- this is the actual fix (shimming `pip` does nothing,
+          # the call is `python -m pip`).
+          echo "VIRTUAL_ENV=$HOME/.venv" >> "$GITHUB_ENV"
+          echo "PYTHONHOME=" >> "$GITHUB_ENV"
 
       - name: buildozer android debug
         working-directory: flowy
@@ -229,14 +228,12 @@ jobs:
           pip install -q --upgrade pip wheel setuptools
           pip install -q scons numpy pycryptodome pycapnp pyyaml certifi hatanaka casadi future-fstrings \
             appdirs colorama jinja2 "sh>=1.10,<2.0" build toml packaging virtualenv
-          # Same --user shim as the flowy job: buildozer is invoked here too
-          # (to fetch the NDK), and it shells out to pip --user.
-          WRAPPER='IyEvYmluL2Jhc2gKIyBTdHJpcCAtLXVzZXI6IGEgdmVudiBoYXMgbm8gdmlzaWJsZSB1c2VyIHNpdGUtcGFja2FnZXMuCmFyZ3M9KCkKZm9yIGEgaW4gIiRAIjsgZG8KICBbICIkYSIgPSAiLS11c2VyIiBdIHx8IGFyZ3MrPSgiJGEiKQpkb25lCmV4ZWMgIiRIT01FLy52ZW52L2Jpbi9weXRob24iIC1tIHBpcCAiJHthcmdzW0BdfSIK'
-          echo "$WRAPPER" | base64 -d > "$HOME/.venv/bin/pip"
-          chmod +x "$HOME/.venv/bin/pip"
           scons --version | head -3
           echo "PATH=$HOME/.venv/bin:$PATH" >> "$GITHUB_ENV"
           echo "PIP_NO_INPUT=1" >> "$GITHUB_ENV"
+          # See the flowy job: buildozer only skips `pip --user` when it can
+          # see VIRTUAL_ENV, and every `run:` step is a fresh shell.
+          echo "VIRTUAL_ENV=$HOME/.venv" >> "$GITHUB_ENV"
 
       - name: Ensure NDK is present
         run: |

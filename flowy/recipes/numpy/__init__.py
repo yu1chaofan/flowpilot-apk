@@ -262,6 +262,20 @@ class NumpyCompatRecipe(NumpyRecipe):
                         continue
                     with open(dst, 'w') as handle:
                         handle.write(text)
+                    # npymath's npy_math.c does
+                    #     #include "npy_math_internal.h.src"
+                    # -- it names the template, not the generated header, and
+                    # relies on build_src having expanded it in place. Since
+                    # that pass is a no-op here, overwrite the .src with its own
+                    # expanded text so the include picks up real code. A
+                    # pristine sibling (.src.orig) is kept for reference and
+                    # idempotency.
+                    if name.endswith(('.h.src', '.c.src')):
+                        orig = src + '.orig'
+                        if not os.path.exists(orig):
+                            shutil.copyfile(src, orig)
+                        with open(src, 'w') as handle:
+                            handle.write(text)
                     expanded += 1
         info('numpy: expanded {} .src templates'.format(expanded))
 

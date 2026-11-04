@@ -137,6 +137,8 @@ class NumpyCompatRecipe(NumpyRecipe):
             if not os.path.exists(cfg):
                 self._write_npy_config_h(base, cfg, info)
 
+        self._write_npy_fpmath_h(base, info)
+
     @staticmethod
     def _mirror_numpy_headers(base, info):
         """Copy every header the C compiler will look for into build/src.*.
@@ -194,6 +196,78 @@ class NumpyCompatRecipe(NumpyRecipe):
                         except OSError:
                             pass
         info('numpy: mirrored {} headers into build/src.*'.format(copied))
+
+    @staticmethod
+    def _write_npy_fpmath_h(base, info):
+        """Write npy_fpmath.h for aarch64.
+
+        npy_math_private.h does ``#include "npy_fpmath.h"``, which numpy's
+        build_src generates from the result of its long-double probe. Under p4a
+        that pass emits nothing, so the header is simply absent:
+
+            npy_math_private.h:31:10: fatal error: 'npy_fpmath.h' file not found
+
+        On AArch64 the C ABI defines long double as IEEE-754 binary128 (the
+        NDK's clang implements it in software via compiler-rt), so the probe
+        result is known ahead of time. The macro set below is the one numpy
+        1.22.3 emits for a binary128 long double; it selects the "float128"
+        npymath implementation, exactly as an x86 build selects its 80-bit
+        variant.
+        """
+        import os
+
+        content = """\
+#ifndef NUMPY_CORE_INCLUDE_NUMPY_NPY_FPMATH_H_
+#define NUMPY_CORE_INCLUDE_NUMPY_NPY_FPMATH_H_
+
+/* Generated for aarch64-linux-android: the AArch64 ABI defines long double
+   as IEEE-754 binary128, which numpy treats as its "float128" configuration
+   (see numpy/core/setup_common.py::CONFIG_FUNC / the _npy_float128 paths). */
+#include <numpy/npy_common.h>
+
+#if defined(NPY_HAVE_FLOAT128) || defined(NPY_HAVE_LDOUBLE_IEEE_QUAD_LE)
+#define NPY_FPMATH_USE_FLOAT128 1
+#else
+#define NPY_FPMATH_USE_FLOAT128 1
+#endif
+
+/* No x87 extended precision on arm64. */
+#undef NPY_HAVE_LDOUBLE_IEEE_EXT_LITTLE
+#define NPY_HAVE_LDOUBLE_IEEE_EXT_LITTLE 0
+#undef NPY_HAVE_LDOUBLE_IEEE_EXT_BIG
+#define NPY_HAVE_LDOUBLE_IEEE_EXT_BIG 0
+#undef NPY_HAVE_LDOUBLE_DOUBLE_DOUBLE_LE
+#define NPY_HAVE_LDOUBLE_DOUBLE_DOUBLE_LE 0
+#undef NPY_HAVE_LDOUBLE_DOUBLE_DOUBLE_BE
+#define NPY_HAVE_LDOUBLE_DOUBLE_DOUBLE_BE 0
+#undef NPY_HAVE_LDOUBLE_INTEL_EXTENDED_10_BYTES_LE
+#define NPY_HAVE_LDOUBLE_INTEL_EXTENDED_10_BYTES_LE 0
+#undef NPY_HAVE_LDOUBLE_INTEL_EXTENDED_12_BYTES_LE
+#define NPY_HAVE_LDOUBLE_INTEL_EXTENDED_12_BYTES_LE 0
+#undef NPY_HAVE_LDOUBLE_INTEL_EXTENDED_16_BYTES_LE
+#define NPY_HAVE_LDOUBLE_INTEL_EXTENDED_16_BYTES_LE 0
+
+/* AArch64 long double is binary128 and little-endian. */
+#ifndef NPY_HAVE_LDOUBLE_IEEE_QUAD_LE
+#define NPY_HAVE_LDOUBLE_IEEE_QUAD_LE 1
+#endif
+
+#endif /* NUMPY_CORE_INCLUDE_NUMPY_NPY_FPMATH_H_ */
+"""
+        # Place it wherever -Inumpy/core/include/numpy resolves: both the
+        # staged build tree and the source tree (the latter is on CPPPATH too).
+        targets = [
+            os.path.join(base, 'build', 'src.aarch64-linux-android-3.11',
+                         'numpy', 'core', 'include', 'numpy'),
+            os.path.join(base, 'numpy', 'core', 'include', 'numpy'),
+        ]
+        for out_dir in targets:
+            os.makedirs(out_dir, exist_ok=True)
+            dst = os.path.join(out_dir, 'npy_fpmath.h')
+            if not os.path.exists(dst):
+                with open(dst, 'w') as handle:
+                    handle.write(content)
+                info('numpy: wrote {}'.format(dst))
 
     @staticmethod
     def _write_npy_config_h(base, dst, info):

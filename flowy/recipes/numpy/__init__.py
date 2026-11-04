@@ -74,21 +74,40 @@ class NumpyCompatRecipe(NumpyRecipe):
             return
         with open(path) as handle:
             text = handle.read()
-        needle = '        self.compiler.customize(self.distribution)\n'
-        if needle not in text:
-            info('numpy: build_ext.customize already handled')
+        changed = 0
+        # Three numpy.distutils hooks that only exist on numpy's own CCompiler
+        # class (attached via replace_method), not on setuptools'
+        # UnixCCompiler -- which is what new_compiler() hands back here:
+        #   customize()     -> customize_compiler()
+        #   customize_cmd() -> nothing (it only records command bookkeeping)
+        #   show_customization() -> nothing (logging only)
+        substitutions = [
+            ('        self.compiler.customize(self.distribution)\n',
+             '        _customize = getattr(self.compiler, "customize", None)\n'
+             '        if _customize is not None:\n'
+             '            _customize(self.distribution)\n'
+             '        else:\n'
+             '            from distutils.sysconfig import customize_compiler\n'
+             '            customize_compiler(self.compiler)\n'),
+            ('        self.compiler.customize_cmd(self)\n',
+             '        _customize_cmd = getattr(self.compiler, "customize_cmd", None)\n'
+             '        if _customize_cmd is not None:\n'
+             '            _customize_cmd(self)\n'),
+            ('            self.compiler.show_customization()\n',
+             '            _show = getattr(self.compiler, "show_customization", None)\n'
+             '            if _show is not None:\n'
+             '                _show()\n'),
+        ]
+        for needle, replacement in substitutions:
+            if needle in text:
+                text = text.replace(needle, replacement, 1)
+                changed += 1
+        if not changed:
+            info('numpy: build_ext.py already handled')
             return
-        replacement = (
-            '        _customize = getattr(self.compiler, "customize", None)\n'
-            '        if _customize is not None:\n'
-            '            _customize(self.distribution)\n'
-            '        else:\n'
-            '            from distutils.sysconfig import customize_compiler\n'
-            '            customize_compiler(self.compiler)\n')
-        text = text.replace(needle, replacement, 1)
         with open(path, 'w') as handle:
             handle.write(text)
-        info('numpy: patched build_ext.py customize call')
+        info('numpy: patched {} build_ext.py compiler hooks'.format(changed))
 
     def build_arch(self, arch, **kwargs):
         """Probe the npymath include path before numpy compiles anything.

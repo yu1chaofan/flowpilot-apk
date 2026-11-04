@@ -53,6 +53,43 @@ class NumpyCompatRecipe(NumpyRecipe):
     """
 
     name = 'numpy'
+    def _patch_build_ext_customize(self, arch):
+        """Belt-and-braces for build_ext.compiler.customize.
+
+        numpy/distutils/command/build_ext.py calls
+            self.compiler.customize(self.distribution)
+        but numpy.distutils only attaches that method to its own CCompiler
+        class via replace_method(); the object in hand is often plain
+        setuptools' UnixCCompiler:
+            AttributeError: 'UnixCCompiler' object has no attribute 'customize'
+        The patch file handles the normal case; this rewrite covers the case
+        where the patch did not apply (context drift) so the build still moves.
+        """
+        import os
+        from pythonforandroid.logger import info
+
+        path = os.path.join(self.get_build_dir(arch.arch), 'numpy', 'distutils',
+                            'command', 'build_ext.py')
+        if not os.path.exists(path):
+            return
+        with open(path) as handle:
+            text = handle.read()
+        needle = '        self.compiler.customize(self.distribution)\n'
+        if needle not in text:
+            info('numpy: build_ext.customize already handled')
+            return
+        replacement = (
+            '        _customize = getattr(self.compiler, "customize", None)\n'
+            '        if _customize is not None:\n'
+            '            _customize(self.distribution)\n'
+            '        else:\n'
+            '            from distutils.sysconfig import customize_compiler\n'
+            '            customize_compiler(self.compiler)\n')
+        text = text.replace(needle, replacement, 1)
+        with open(path, 'w') as handle:
+            handle.write(text)
+        info('numpy: patched build_ext.py customize call')
+
     def build_arch(self, arch, **kwargs):
         """Probe the npymath include path before numpy compiles anything.
 
@@ -62,6 +99,7 @@ class NumpyCompatRecipe(NumpyRecipe):
         instead: it is called for every recipe unconditionally.
         """
         self._ensure_npymath_headers(arch)
+        self._patch_build_ext_customize(arch)
         return super().build_arch(arch, **kwargs)
 
     def _ensure_npymath_headers(self, arch):

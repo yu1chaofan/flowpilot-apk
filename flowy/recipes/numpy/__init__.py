@@ -54,24 +54,29 @@ class NumpyCompatRecipe(NumpyRecipe):
 
     name = 'numpy'
     def prebuild_arch(self, arch):
-        """Materialise the npymath headers before numpy is configured.
+        """Repair the npymath headers before numpy is configured.
 
-        numpy emits npy_math_private.h / npy_math_internal.h from their .src
-        templates during build_src, driven by the add_data_files() entries in
-        numpy/core/setup.py. Under p4a's cross-compile patches that data-files
-        pass produces no output at all -- build_src creates the target dirs and
-        then stops without copying anything -- so the very first compile of the
-        npymath library dies:
+        The build then dies at the very first npymath compile with:
 
             numpy/core/src/npymath/npy_math_internal.h.src:56:10:
             fatal error: 'npy_math_private.h' file not found
 
-        The compiler looks the headers up via
-        -Ibuild/src.<plat>-<pyver>/numpy/core/src/npymath, a path relative to
-        the numpy source root (the cwd of setup.py). Expanding the templates
-        into that exact directory up front is deterministic and idempotent.
+        npy_math_private.h is a plain header in numpy's own tree (it is NOT a
+        .src template -- upstream numpy has npy_math_private.h at 17 KB and no
+        .src siblings for it). It goes missing in the p4a build tree because
+        numpy's data-file pass (which copies headers from the source tree into
+        build/src.<plat>/) emits nothing under the p4a patches, so whatever was
+        not already on the compiler's include path never arrives.
+
+        Rather than reconstruct the header (it is 17 KB of platform-dependent
+        #defines we would only get subtly wrong), make the include resolvable:
+        copy the existing header into the build/src.<plat>/npymath directory
+        that the compile line actually adds with -I. If the header is absent
+        from the source tree too, say so loudly instead of failing later with a
+        confusing missing-file error at line 56.
         """
         import os
+        import shutil
         from os.path import join as _join, isdir, exists
         from pythonforandroid.logger import info
 
@@ -81,38 +86,41 @@ class NumpyCompatRecipe(NumpyRecipe):
             info('numpy: no npymath sources at {}'.format(npymath))
             return
 
-        # <plat> matches what numpy uses for build/src.<plat>-<pyver>; the
-        # exact suffix varies (aarch64-linux-android-3.11 here), so mirror the
-        # path numpy itself announced by scanning for build/src.* dirs, and
-        # additionally drop the header beside the template, which is on the
-        # include path through -Inumpy/core/src/npymath.
-        out_dirs = [npymath]
+        header = _join(npymath, 'npy_math_private.h')
+        if not exists(header):
+            # numpy's sdist genuinely ships this file (17 KB, not a template),
+            # so if it is missing the unpack step dropped it. Walk the source
+            # root once before giving up -- a moved copy is still usable.
+            found = None
+            for dirpath, _dirnames, filenames in os.walk(build_dir):
+                if 'npy_math_private.h' in filenames:
+                    found = _join(dirpath, 'npy_math_private.h')
+                    break
+            if found:
+                info('numpy: npy_math_private.h found at {}'.format(found))
+                header = found
+            else:
+                info('numpy: !! npy_math_private.h absent from the unpacked '
+                     'numpy tree ({}); the build will fail at '
+                     'npy_math_internal.h.src:56'.format(npymath))
+                info('numpy: tree listing: {}'.format(sorted(os.listdir(npymath))))
+                return
+
+        # -Ibuild/src.<plat>-<pyver>/numpy/core/src/npymath is on the compile
+        # line, and that path is relative to the numpy source root (setup.py's
+        # cwd). Mirror the header into every build/src* dir that exists or
+        # should exist.
+        targets = set()
         for entry in os.listdir(build_dir):
             if entry.startswith('build'):
-                cand = _join(build_dir, entry, 'numpy', 'core', 'src', 'npymath')
-                out_dirs.append(cand)
-
-        for name in ('npy_math_private.h', 'npy_math_internal.h'):
-            tpl = _join(npymath, name + '.src')
-            if not exists(tpl):
-                info('numpy: template {} missing'.format(tpl))
-                continue
-            for out_dir in out_dirs:
-                os.makedirs(out_dir, exist_ok=True)
-                dst = _join(out_dir, name)
-                if exists(dst):
-                    continue
-                # numpy's conv_template does the @VAR@ substitution; it has no
-                # numpy imports at module scope, so load it straight from the
-                # tree being built.
-                import importlib.util
-                spec = importlib.util.spec_from_file_location(
-                    '_np_conv_template',
-                    _join(build_dir, 'numpy', 'distutils', 'conv_template.py'))
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                mod.process_file(tpl, dst)
-                info('numpy: generated {}'.format(dst))
+                targets.add(_join(build_dir, entry, 'numpy', 'core', 'src',
+                                  'npymath'))
+        for out_dir in sorted(targets):
+            os.makedirs(out_dir, exist_ok=True)
+            dst = _join(out_dir, 'npy_math_private.h')
+            if not exists(dst):
+                shutil.copyfile(header, dst)
+                info('numpy: staged npy_math_private.h -> {}'.format(dst))
 
     patches = [
         join(P4A_PATCH_DIR, 'remove-default-paths.patch'),

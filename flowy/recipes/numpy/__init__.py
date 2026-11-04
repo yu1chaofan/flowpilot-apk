@@ -111,6 +111,24 @@ class NumpyCompatRecipe(NumpyRecipe):
         text, n = _re.subn(r'(?m)^(\s*)self\.compiler\.show_customization\(\)\n',
                            _drop_show, text)
         changed += n
+
+        # Any remaining `<obj>.customize(self.distribution ...)` call, whatever
+        # local name the command uses to reach the compiler (build_ext uses both
+        # `self.compiler` and a bare `compiler`). Each is a chance for:
+        #   AttributeError: 'UnixCCompiler' object has no attribute 'customize'
+        def _guard_customize(match):
+            indent, target = match.group(1), match.group(2)
+            return (indent + '_cz = getattr({0}, "customize", None)\n'.format(target)
+                    + indent + 'if _cz is not None:\n'
+                    + indent + '    _cz(self.distribution)\n'
+                    + indent + 'else:\n'
+                    + indent + '    from distutils.sysconfig import customize_compiler\n'
+                    + indent + '    customize_compiler({0})\n'.format(target))
+
+        text, n2 = _re.subn(
+            r'(?m)^(\s*)([A-Za-z_][\w.]*)\.customize\(self\.distribution[^)]*\)\n',
+            _guard_customize, text)
+        changed += n2
         if not changed:
             info('numpy: build_ext.py already handled')
             return

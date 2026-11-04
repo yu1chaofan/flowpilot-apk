@@ -16,13 +16,35 @@ show_customization() only logs, so no-ops are faithful for this build.
 """
 
 try:
-    from distutils.ccompiler import CCompiler
-    from distutils.sysconfig import customize_compiler
+    import distutils.ccompiler as _dcc
 
-    if not getattr(CCompiler, "_p4a_numpy_hooks", False):
+    classes = []
+    for modname in ("setuptools._distutils.ccompiler",
+                    "numpy.distutils.ccompiler"):
+        try:
+            mod = __import__(modname, fromlist=["CCompiler"])
+            classes.append(mod.CCompiler)
+        except Exception:
+            pass
 
-        def _customize(self, dist, need_cxx=0):
-            customize_compiler(self)
+    try:
+        from distutils.ccompiler import CCompiler as _std
+        classes.append(_std)
+    except Exception:
+        pass
+
+    try:
+        from distutils.sysconfig import customize_compiler
+    except Exception:
+        customize_compiler = None
+
+    for cls in classes:
+        if getattr(cls, "_p4a_numpy_hooks", False):
+            continue
+
+        def _customize(self, dist, need_cxx=0, _cc=customize_compiler):
+            if _cc is not None:
+                _cc(self)
 
         def _customize_cmd(self, cmd):
             return None
@@ -30,9 +52,9 @@ try:
         def _show_customization(self):
             return None
 
-        CCompiler.customize = _customize
-        CCompiler.customize_cmd = _customize_cmd
-        CCompiler.show_customization = _show_customization
-        CCompiler._p4a_numpy_hooks = True
+        cls.customize = _customize
+        cls.customize_cmd = _customize_cmd
+        cls.show_customization = _show_customization
+        cls._p4a_numpy_hooks = True
 except Exception:
     pass

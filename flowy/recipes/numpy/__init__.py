@@ -339,6 +339,8 @@ class NumpyCompatRecipe(NumpyRecipe):
 #define NPY_SIZEOF_WCHAR_T 4
 #define NPY_SIZEOF_OFF_T 8
 #define NPY_SIZEOF_PY_LONG_LONG 8
+/* npy_math_internal.h spells this one without the second underscore. */
+#define NPY_SIZEOF_LONGLONG 8
 
 #define NPY_HAVE_LDOUBLE_IEEE_QUAD_LE 1
 
@@ -690,6 +692,9 @@ class NumpyCompatRecipe(NumpyRecipe):
 #define NPY_CAT_(a, b) a ## b
 #define NPY_CAT(a, b) NPY_CAT_(a, b)
 #endif
+
+/* npy_math_internal.h spells this without the second underscore. */
+#define NPY_SIZEOF_LONGLONG 8
 
 #define NPY_POLYLIKE 1
 #define NPY_USE_C99_COMPLEX 1

@@ -78,6 +78,16 @@ class NumpyCompatRecipe(NumpyRecipe):
             return
         entries = sorted(os.listdir(npymath))
         info('numpy: npymath has {}'.format(entries))
+        inc_numpy = os.path.join(base, 'numpy', 'core', 'include', 'numpy')
+        if os.path.isdir(inc_numpy):
+            hp = sorted(n for n in os.listdir(inc_numpy) if n.endswith('.h'))
+            fp = [n for n in hp if 'fpmath' in n]
+            info('numpy: include/numpy has {} headers, fpmath={}'.format(
+                len(hp), fp))
+        # Mirror every header first: npy_math_private.h transitively includes
+        # npy_config.h and npy_fpmath.h, so staging only the one current error
+        # names would just move the failure one include further down.
+        self._mirror_numpy_headers(base, info)
 
         source = None
         for name in ('npy_math_private.h', 'npy_math_private.h.src'):
@@ -93,8 +103,6 @@ class NumpyCompatRecipe(NumpyRecipe):
         info('numpy: npy_math_private.h source = {}'.format(source))
         if source is None:
             return
-
-        self._mirror_numpy_headers(base, info)
 
         targets = glob.glob(os.path.join(base, 'build', 'src.*', 'numpy',
                                          'core', 'src', 'npymath'))
@@ -123,6 +131,7 @@ class NumpyCompatRecipe(NumpyRecipe):
             # its numpy/ subdirectory.
             core_dir = os.path.dirname(os.path.dirname(out_dir))
             inc_dir = os.path.join(core_dir, 'include', 'numpy')
+            info('numpy: config header dir {}'.format(inc_dir))
             os.makedirs(inc_dir, exist_ok=True)
             cfg = os.path.join(inc_dir, 'npy_config.h')
             if not os.path.exists(cfg):
@@ -148,9 +157,17 @@ class NumpyCompatRecipe(NumpyRecipe):
             os.path.join(base, 'numpy', 'core', 'include'),
             os.path.join(base, 'numpy', 'core', 'src'),
         ]
+        # build/src.<plat>-<pyver> is created by numpy during build_src, which
+        # has not run at this point. Build the canonical name ourselves and
+        # use it as the fallback target rather than skipping the mirror (a
+        # silent skip is what made the previous round behave exactly like the
+        # one before it).
         dest_roots = glob.glob(os.path.join(base, 'build', 'src.*'))
         if not dest_roots:
-            return
+            dest_roots = [os.path.join(
+                base, 'build', 'src.aarch64-linux-android-3.11')]
+            os.makedirs(dest_roots[0], exist_ok=True)
+            info('numpy: build/src.* absent, created {}'.format(dest_roots[0]))
 
         copied = 0
         for dest_root in dest_roots:

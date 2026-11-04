@@ -91,15 +91,22 @@ jobs:
             appdirs colorama jinja2 "sh>=1.10,<2.0" build toml packaging \
             virtualenv
           buildozer --version
-          echo "PATH=$HOME/.venv/bin:$PATH" >> "$GITHUB_ENV"
-          # buildozer/buildozer/targets/android.py shells out to
-          #   <python> -m pip install --user <deps>
-          # which pip rejects inside a venv:
+
+          # buildozer shells out to `python -m pip install --user <deps>` for its
+          # own prerequisites. Inside a venv pip hard-fails:
           #   ERROR: Can not perform a '--user' install.
           #   User site-packages are not visible in this virtualenv.
-          # PIP_USER=0 makes pip ignore the --user flag instead of failing; the
-          # packages are already present from the line above.
-          echo "PIP_USER=0" >> "$GITHUB_ENV"
+          # PIP_USER=0 does NOT help (the flag is explicit on the command line),
+          # so shadow `pip` with a wrapper that drops --user. The deps are
+          # already installed above, making the later calls no-ops.
+          # Written via base64 so the YAML block indentation cannot leak into
+          # the script body.
+          WRAPPER='IyEvYmluL2Jhc2gKIyBTdHJpcCAtLXVzZXI6IGEgdmVudiBoYXMgbm8gdmlzaWJsZSB1c2VyIHNpdGUtcGFja2FnZXMuCmFyZ3M9KCkKZm9yIGEgaW4gIiRAIjsgZG8KICBbICIkYSIgPSAiLS11c2VyIiBdIHx8IGFyZ3MrPSgiJGEiKQpkb25lCmV4ZWMgIiRIT01FLy52ZW52L2Jpbi9weXRob24iIC1tIHBpcCAiJHthcmdzW0BdfSIK'
+          echo "$WRAPPER" | base64 -d > "$HOME/.venv/bin/pip"
+          chmod +x "$HOME/.venv/bin/pip"
+          "$HOME/.venv/bin/pip" --version
+
+          echo "PATH=$HOME/.venv/bin:$PATH" >> "$GITHUB_ENV"
           echo "PIP_NO_INPUT=1" >> "$GITHUB_ENV"
 
       - name: buildozer android debug
@@ -222,9 +229,13 @@ jobs:
           pip install -q --upgrade pip wheel setuptools
           pip install -q scons numpy pycryptodome pycapnp pyyaml certifi hatanaka casadi future-fstrings \
             appdirs colorama jinja2 "sh>=1.10,<2.0" build toml packaging virtualenv
+          # Same --user shim as the flowy job: buildozer is invoked here too
+          # (to fetch the NDK), and it shells out to pip --user.
+          WRAPPER='IyEvYmluL2Jhc2gKIyBTdHJpcCAtLXVzZXI6IGEgdmVudiBoYXMgbm8gdmlzaWJsZSB1c2VyIHNpdGUtcGFja2FnZXMuCmFyZ3M9KCkKZm9yIGEgaW4gIiRAIjsgZG8KICBbICIkYSIgPSAiLS11c2VyIiBdIHx8IGFyZ3MrPSgiJGEiKQpkb25lCmV4ZWMgIiRIT01FLy52ZW52L2Jpbi9weXRob24iIC1tIHBpcCAiJHthcmdzW0BdfSIK'
+          echo "$WRAPPER" | base64 -d > "$HOME/.venv/bin/pip"
+          chmod +x "$HOME/.venv/bin/pip"
           scons --version | head -3
           echo "PATH=$HOME/.venv/bin:$PATH" >> "$GITHUB_ENV"
-          echo "PIP_USER=0" >> "$GITHUB_ENV"
           echo "PIP_NO_INPUT=1" >> "$GITHUB_ENV"
 
       - name: Ensure NDK is present

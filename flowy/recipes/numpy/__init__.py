@@ -273,7 +273,18 @@ class NumpyCompatRecipe(NumpyRecipe):
                     # expanded text so the include picks up real code. A
                     # pristine sibling (.src.orig) is kept for reference and
                     # idempotency.
-                    if name.endswith(('.h.src', '.c.src')):
+                    if name.endswith('.h.src'):
+                        # npy_math.c does `#include "npy_math_internal.h.src"`,
+                        # naming the template rather than the generated header,
+                        # because numpy normally expands it in place. Write the
+                        # expanded text back so that include resolves, keeping a
+                        # pristine copy for idempotency.
+                        #
+                        # .c.src templates are left alone: they are compiled
+                        # through their own .c translations and overwriting them
+                        # broke ieee754.c.src's `#include "_signbit.c"`, which is
+                        # resolved relative to the file the compiler believes it
+                        # is reading.
                         orig = src + '.orig'
                         if not os.path.exists(orig):
                             shutil.copyfile(src, orig)
@@ -613,11 +624,6 @@ class NumpyCompatRecipe(NumpyRecipe):
    decorators expands to an undeclared identifier:
        npy_math_internal.h:599: use of undeclared identifier 'NPY_CAT'
    A two-level CAT is the standard token-paste idiom. */
-#ifndef NPY_CAT
-#define NPY_CAT_(a, b) a ## b
-#define NPY_CAT(a, b) NPY_CAT_(a, b)
-#endif
-
 #define NPY_POLYLIKE 1
 #define NPY_USE_C99_COMPLEX 1
 #define NPY_USE_C99_FORMATS 1

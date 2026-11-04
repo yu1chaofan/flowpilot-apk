@@ -396,9 +396,7 @@ class NumpyCompatRecipe(NumpyRecipe):
 #define HAVE_SYS_ENDIAN_H 1
 #define HAVE_LIBUNWIND_H 0
 #define HAVE_LIBUNWIND 0
-#define HAVE_XMMINTRIN_H 0
-#define HAVE_EMMINTRIN_H 0
-#define HAVE_IMMINTRIN_H 0
+/* x86 SIMD headers must stay UNDEFINED: npy_common.h tests them with #ifdef. */
 
 #define inline inline
 #define restrict __restrict__
@@ -440,35 +438,17 @@ class NumpyCompatRecipe(NumpyRecipe):
 #ifndef NUMPY_CORE_INCLUDE_NUMPY_NPY_FPMATH_H_
 #define NUMPY_CORE_INCLUDE_NUMPY_NPY_FPMATH_H_
 
-/* Generated for aarch64-linux-android: the AArch64 ABI defines long double
-   as IEEE-754 binary128, which numpy treats as its "float128" configuration
-   (see numpy/core/setup_common.py::CONFIG_FUNC / the _npy_float128 paths). */
-#include <numpy/npy_common.h>
+/* aarch64-linux-android: the AArch64 ABI defines long double as IEEE-754
+   binary128, so numpy must take the "float128" path.
 
-#if defined(NPY_HAVE_FLOAT128) || defined(NPY_HAVE_LDOUBLE_IEEE_QUAD_LE)
-#define NPY_FPMATH_USE_FLOAT128 1
-#else
-#define NPY_FPMATH_USE_FLOAT128 1
-#endif
+   numpy selects that path with #ifdef, not #if: npy_math_private.h contains
+       #if defined(NPY_HAVE_LDOUBLE_INTEL_EXTENDED_16_BYTES_LE)
+   and defines the x87 bit-field macros (LDBL_MANL_INDEX, ...) inside those
+   blocks. Writing `#define NPY_HAVE_LDOUBLE_INTEL_EXTENDED_... 0` therefore
+   counts as "present" and drags ieee754.c into code that only compiles on
+   x86. Leave every x86 variant undefined. */
 
-/* No x87 extended precision on arm64. */
-#undef NPY_HAVE_LDOUBLE_IEEE_EXT_LITTLE
-#define NPY_HAVE_LDOUBLE_IEEE_EXT_LITTLE 0
-#undef NPY_HAVE_LDOUBLE_IEEE_EXT_BIG
-#define NPY_HAVE_LDOUBLE_IEEE_EXT_BIG 0
-#undef NPY_HAVE_LDOUBLE_DOUBLE_DOUBLE_LE
-#define NPY_HAVE_LDOUBLE_DOUBLE_DOUBLE_LE 0
-#undef NPY_HAVE_LDOUBLE_DOUBLE_DOUBLE_BE
-#define NPY_HAVE_LDOUBLE_DOUBLE_DOUBLE_BE 0
-#undef NPY_HAVE_LDOUBLE_INTEL_EXTENDED_10_BYTES_LE
-#define NPY_HAVE_LDOUBLE_INTEL_EXTENDED_10_BYTES_LE 0
-#undef NPY_HAVE_LDOUBLE_INTEL_EXTENDED_12_BYTES_LE
-#define NPY_HAVE_LDOUBLE_INTEL_EXTENDED_12_BYTES_LE 0
-#undef NPY_HAVE_LDOUBLE_INTEL_EXTENDED_16_BYTES_LE
-#define NPY_HAVE_LDOUBLE_INTEL_EXTENDED_16_BYTES_LE 0
-
-/* AArch64 long double is binary128 and little-endian. */
-#ifndef NPY_HAVE_LDOUBLE_IEEE_QUAD_LE
+#if !defined(NPY_HAVE_LDOUBLE_IEEE_QUAD_LE)
 #define NPY_HAVE_LDOUBLE_IEEE_QUAD_LE 1
 #endif
 

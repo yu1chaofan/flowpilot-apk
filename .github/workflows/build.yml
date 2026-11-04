@@ -85,11 +85,22 @@ jobs:
           python3 -m venv ~/.venv
           . ~/.venv/bin/activate
           pip install -q --upgrade pip wheel setuptools
-          # cython pinned by the pycapnp recipe itself; install it here too so
-          # `buildozer` does not spend a round discovering it is missing.
-          pip install -q buildozer "cython==0.29.37"
+          # Everything buildozer tries to `pip install --user` (see below) plus
+          # the p4a runtime deps, installed into the venv directly.
+          pip install -q buildozer "cython==0.29.37" \
+            appdirs colorama jinja2 "sh>=1.10,<2.0" build toml packaging \
+            virtualenv
           buildozer --version
           echo "PATH=$HOME/.venv/bin:$PATH" >> "$GITHUB_ENV"
+          # buildozer/buildozer/targets/android.py shells out to
+          #   <python> -m pip install --user <deps>
+          # which pip rejects inside a venv:
+          #   ERROR: Can not perform a '--user' install.
+          #   User site-packages are not visible in this virtualenv.
+          # PIP_USER=0 makes pip ignore the --user flag instead of failing; the
+          # packages are already present from the line above.
+          echo "PIP_USER=0" >> "$GITHUB_ENV"
+          echo "PIP_NO_INPUT=1" >> "$GITHUB_ENV"
 
       - name: buildozer android debug
         working-directory: flowy
@@ -98,7 +109,6 @@ jobs:
         run: |
           set -o pipefail
           buildozer -v android debug 2>&1 | tee /tmp/flowy.log | tail -40
-          echo "rc=$?"
 
       - name: p4a error digest
         if: failure()
@@ -210,9 +220,12 @@ jobs:
           python3 -m venv ~/.venv
           . ~/.venv/bin/activate
           pip install -q --upgrade pip wheel setuptools
-          pip install -q scons numpy pycryptodome pycapnp pyyaml certifi hatanaka casadi future-fstrings
+          pip install -q scons numpy pycryptodome pycapnp pyyaml certifi hatanaka casadi future-fstrings \
+            appdirs colorama jinja2 "sh>=1.10,<2.0" build toml packaging virtualenv
           scons --version | head -3
           echo "PATH=$HOME/.venv/bin:$PATH" >> "$GITHUB_ENV"
+          echo "PIP_USER=0" >> "$GITHUB_ENV"
+          echo "PIP_NO_INPUT=1" >> "$GITHUB_ENV"
 
       - name: Ensure NDK is present
         run: |

@@ -607,6 +607,17 @@ class NumpyCompatRecipe(NumpyRecipe):
 #define NPY_SIZEOF_OFF_T 8
 #define NPY_SIZEOF_PY_LONG_LONG 8
 
+/* npymath's npy_math_internal.h.src decorates per-precision symbols with
+   NPY_CAT(X, l) / NPY_CAT(X, f) / NPY_CAT(X, ). The macro itself is normally
+   supplied by numpy's build machinery; when it is absent every one of those
+   decorators expands to an undeclared identifier:
+       npy_math_internal.h:599: use of undeclared identifier 'NPY_CAT'
+   A two-level CAT is the standard token-paste idiom. */
+#ifndef NPY_CAT
+#define NPY_CAT_(a, b) a ## b
+#define NPY_CAT(a, b) NPY_CAT_(a, b)
+#endif
+
 #define NPY_POLYLIKE 1
 #define NPY_USE_C99_COMPLEX 1
 #define NPY_USE_C99_FORMATS 1

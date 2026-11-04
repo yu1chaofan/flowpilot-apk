@@ -459,6 +459,31 @@ class NumpyCompatRecipe(NumpyRecipe):
        npy_common.h:87: "NPY_HAVE_SSE_INTRINSICS" macro redefined
    and then the x86 headers fail to compile for aarch64. */
 
+/* npy_math_internal.h picks its symbol decorator from these:
+     #if NPY_SIZEOF_LONGDOUBLE == NPY_SIZEOF_DOUBLE
+         #define NPY__FP_SFX(X) X
+     #else
+         #define NPY__FP_SFX(X) NPY_CAT(X, l)
+     #endif
+   They are normally produced by the same probe pass as the SIZEOF_* block
+   above; leaving them undefined makes the comparison evaluate false and every
+   float helper is decorated with a CAT() that is never declared. */
+#define NPY_SIZEOF_SHORT 2
+#define NPY_SIZEOF_INT 4
+#define NPY_SIZEOF_LONG 8
+#define NPY_SIZEOF_FLOAT 4
+#define NPY_SIZEOF_COMPLEX_FLOAT 8
+#define NPY_SIZEOF_DOUBLE 8
+#define NPY_SIZEOF_COMPLEX_DOUBLE 16
+#define NPY_SIZEOF_LONGDOUBLE 16
+#define NPY_SIZEOF_COMPLEX_LONGDOUBLE 32
+#define NPY_SIZEOF_PY_INTPTR_T 8
+#define NPY_SIZEOF_INTP 8
+#define NPY_SIZEOF_UINTP 8
+#define NPY_SIZEOF_WCHAR_T 4
+#define NPY_SIZEOF_OFF_T 8
+#define NPY_SIZEOF_PY_LONG_LONG 8
+
 #define NPY_POLYLIKE 1
 #define NPY_USE_C99_COMPLEX 1
 #define NPY_USE_C99_FORMATS 1

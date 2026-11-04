@@ -94,6 +94,8 @@ class NumpyCompatRecipe(NumpyRecipe):
         if source is None:
             return
 
+        self._mirror_numpy_headers(base, info)
+
         targets = glob.glob(os.path.join(base, 'build', 'src.*', 'numpy',
                                          'core', 'src', 'npymath'))
         if not targets:
@@ -125,6 +127,56 @@ class NumpyCompatRecipe(NumpyRecipe):
             cfg = os.path.join(inc_dir, 'npy_config.h')
             if not os.path.exists(cfg):
                 self._write_npy_config_h(base, cfg, info)
+
+    @staticmethod
+    def _mirror_numpy_headers(base, info):
+        """Copy every header the C compiler will look for into build/src.*.
+
+        build_src's data-file pass emits nothing in this build, so headers that
+        numpy copies from numpy/core/{include,src} into build/src.<plat>/ are
+        simply absent. The failures surface one at a time:
+            npy_math_private.h -> 'npy_config.h' not found
+                               -> 'npy_fpmath.h' not found
+        Mirroring the whole header set up front breaks that cycle instead of
+        chasing one missing include per CI round.
+        """
+        import glob
+        import os
+        import shutil
+
+        src_roots = [
+            os.path.join(base, 'numpy', 'core', 'include'),
+            os.path.join(base, 'numpy', 'core', 'src'),
+        ]
+        dest_roots = glob.glob(os.path.join(base, 'build', 'src.*'))
+        if not dest_roots:
+            return
+
+        copied = 0
+        for dest_root in dest_roots:
+            for src_root in src_roots:
+                rel = os.path.relpath(src_root, os.path.join(base, 'numpy', 'core'))
+                target_root = os.path.join(dest_root, 'numpy', 'core', rel)
+                os.makedirs(target_root, exist_ok=True)
+                for dirpath, _dirnames, filenames in os.walk(src_root):
+                    inner = os.path.relpath(dirpath, src_root)
+                    out_dir = os.path.join(target_root, inner) if inner != '.' \
+                        else target_root
+                    os.makedirs(out_dir, exist_ok=True)
+                    for name in filenames:
+                        # Only headers matter here; sources are compiled in
+                        # place by the build commands.
+                        if not name.endswith('.h'):
+                            continue
+                        dst = os.path.join(out_dir, name)
+                        if os.path.exists(dst):
+                            continue
+                        try:
+                            shutil.copyfile(os.path.join(dirpath, name), dst)
+                            copied += 1
+                        except OSError:
+                            pass
+        info('numpy: mirrored {} headers into build/src.*'.format(copied))
 
     @staticmethod
     def _write_npy_config_h(base, dst, info):

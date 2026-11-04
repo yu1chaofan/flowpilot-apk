@@ -388,6 +388,28 @@ class NumpyCompatRecipe(NumpyRecipe):
                                   _anchor, text)
                     with open(src, 'w') as handle:
                         handle.write(text)
+
+                    # The compile plan also references the generated copies
+                    # under build/src.<plat>/, e.g.
+                    #   build/src.aarch64-.../numpy/core/src/multiarray/arraytypes.c
+                    # With build_src inert those files never appear, and the
+                    # link step then fails on every missing .o:
+                    #   error: no such file or directory:
+                    #     'build/temp.../numpy/core/src/npysort/quicksort.o'
+                    # Mirror the expanded source into the same relative path
+                    # under every existing build/src.<plat>/ root.
+                    rel_to_core = os.path.relpath(src, os.path.join(
+                        base, 'numpy', 'core'))
+                    build_root = os.path.join(base, 'build')
+                    if os.path.isdir(build_root):
+                        for entry in os.listdir(build_root):
+                            if not entry.startswith('src.'):
+                                continue
+                            out = os.path.join(build_root, entry, 'numpy',
+                                               'core', rel_to_core)
+                            os.makedirs(os.path.dirname(out), exist_ok=True)
+                            with open(out, 'w') as handle:
+                                handle.write(text)
                     expanded += 1
         info('numpy: expanded {} .src templates'.format(expanded))
 

@@ -51,7 +51,29 @@ class CapnpRecipe(Recipe):
                 'CXXFLAGS=-fPIC -fPIE -shared -mno-outline-atomics',
                 'LIBS=-ldl',
                 _env=env)
-            shprint(sh.make, _env=env)
+            # Build the libraries only.
+            #
+            # A bare `make` also builds the `capnp` / `capnpc-c++` binaries and
+            # the test schema targets, which invoke the *host* `capnp` compiler
+            # (these are codegen tools meant to run on the build machine, and
+            # --with-external-capnp is supposed to provide one). p4a's build
+            # image has no capnp compiler installed, so plain `make` dies with:
+            #
+            #   capnp compile --src-prefix=./src -oc++:src -I./src ...
+            #   /bin/sh: 1: capnp: not found
+            #   make: *** [Makefile:4435: test_capnpc_middleman] Error 127
+            #
+            # pycapnp only links against the shared libraries, so skip the
+            # tools and the tests. `make -j` on the library targets produces
+            # exactly the .libs/lib*.so files collected below.
+            import os as _os2
+            j = '-j{}'.format(_os2.cpu_count() or 4)
+            shprint(sh.make,
+                    j,
+                    'libkj.la', 'libkj-async.la', 'libkj-http.la',
+                    'libcapnp.la', 'libcapnp-rpc.la', 'libcapnp-json.la',
+                    'libcapnp-websocket.la',
+                    _env=env)
             # Copy the freshly linked shared objects out of .libs.
             #
             # Three traps here, each observed in a CI round:

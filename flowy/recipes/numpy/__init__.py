@@ -89,8 +89,6 @@ class NumpyCompatRecipe(NumpyRecipe):
         # this runs.
         self._expand_c_templates(base, info)
 
-        self._point_sources_at_h(base, info)
-
         # Mirror every header first: npy_math_private.h transitively includes
         # npy_config.h and npy_fpmath.h, so staging only the one current error
         # names would just move the failure one include further down.
@@ -230,6 +228,7 @@ class NumpyCompatRecipe(NumpyRecipe):
         argument, no in-place mode), which is what numpy itself calls.
         """
         import os
+        import re
         import importlib.util
         import shutil
 
@@ -275,13 +274,29 @@ class NumpyCompatRecipe(NumpyRecipe):
                     # expanded text so the include picks up real code. A
                     # pristine sibling (.src.orig) is kept for reference and
                     # idempotency.
-                    # No in-place rewriting of any template. Overwriting
-                    # .h.src / .c.src changed the base directory the compiler
-                    # resolves sibling includes against (ieee754.c.src's
-                    # `#include "_signbit.c"`) and, once the .h.src was
-                    # rewritten, stopped numpy's own NPY_CAT plumbing from
-                    # being pulled in. The generated .h / .c files written just
-                    # above are picked up instead -- see _point_sources_at_h().
+                    # Write the expansion back over the template: npy_math.c
+                    # and friends select it by its ".src" name, so the plain
+                    # .h/.c outputs above are never consulted.
+                    #
+                    # conv_template prefixes its output with
+                    #     #line 1 "<the .src path>"
+                    # which is fine for the file itself, but a template that
+                    # includes a sibling by bare name (ieee754.c.src does
+                    # `#include "_signbit.c"`) then fails to resolve it. Anchor
+                    # every quoted sibling include on the template's own
+                    # directory instead.
+                    orig = src + '.orig'
+                    if not os.path.exists(orig):
+                        shutil.copyfile(src, orig)
+
+                    def _anchor(match, _dir=dirpath):
+                        return '#include "{}"'.format(
+                            os.path.join(_dir, match.group(1)))
+
+                    text = re.sub(r'#\s*include\s*"([^"/]+\.(?:c|h))"',
+                                  _anchor, text)
+                    with open(src, 'w') as handle:
+                        handle.write(text)
                     expanded += 1
         info('numpy: expanded {} .src templates'.format(expanded))
 
@@ -472,41 +487,6 @@ class NumpyCompatRecipe(NumpyRecipe):
             with open(dst, 'w') as handle:
                 handle.write(content)
             info('numpy: wrote {}'.format(dst))
-
-    @staticmethod
-    def _point_sources_at_h(base, info):
-        """Retarget `#include "*.h.src"` in npymath sources to the .h files.
-
-        npy_math.c and friends name the templates directly:
-
-            #include "npy_math_internal.h.src"
-
-        because numpy's build_src normally expands the template in place before
-        anything is compiled. That pass is a no-op here, so point the include at
-        the generated header instead of overwriting the template (which breaks
-        relative sibling includes).
-        """
-        import os
-        import re
-
-        npymath = os.path.join(base, 'numpy', 'core', 'src', 'npymath')
-        if not os.path.isdir(npymath):
-            return
-        patched = 0
-        for name in ('npy_math.c', 'npy_math_complex.c.src', 'ieee754.c.src',
-                     'halffloat.c', '_signbit.c'):
-            path = os.path.join(npymath, name)
-            if not os.path.exists(path):
-                continue
-            with open(path) as handle:
-                text = handle.read()
-            new = re.sub(r'#\s*include\s*"([^"]+)\.h\.src"',
-                         r'#include "\1.h"', text)
-            if new != text:
-                with open(path, 'w') as handle:
-                    handle.write(new)
-                patched += 1
-        info('numpy: retargeted {} sources at generated headers'.format(patched))
 
     @staticmethod
     def _write_npy_config_h(base, dst, info):

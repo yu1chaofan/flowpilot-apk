@@ -146,6 +146,7 @@ class NumpyCompatRecipe(NumpyRecipe):
 
         self._write_npy_fpmath_h(base, info)
         self._write_config_h(base, info)
+        self._write_numpyconfig_h(base, info)
 
     @staticmethod
     def _mirror_numpy_headers(base, info):
@@ -299,6 +300,72 @@ class NumpyCompatRecipe(NumpyRecipe):
                         handle.write(text)
                     expanded += 1
         info('numpy: expanded {} .src templates'.format(expanded))
+
+    @staticmethod
+    def _write_numpyconfig_h(base, info):
+        """Write _numpyconfig.h selecting the binary128 long double.
+
+        numpyconfig.h pulls this in first, and it is where the public-API
+        macros live, including the long-double flavour selectors.
+        npy_math_private.h then uses them with #ifdef:
+
+            #if defined(NPY_HAVE_LDOUBLE_INTEL_EXTENDED_16_BYTES_LE)
+            ... x87 bit-field helpers using LDBL_MANL_INDEX ...
+
+        Leaving that undefined on aarch64 is what routes ieee754.c to the
+        binary128 code. The generated variant normally comes from numpy's
+        probe pass, which produces nothing here, so write the AArch64 answers.
+        """
+        import os
+
+        content = """\
+#ifndef NUMPY_CORE_INCLUDE_NUMPY__NUMPYCONFIG_H_
+#define NUMPY_CORE_INCLUDE_NUMPY__NUMPYCONFIG_H_
+
+#include "config.h"
+
+#define NPY_SIZEOF_SHORT SIZEOF_SHORT
+#define NPY_SIZEOF_INT SIZEOF_INT
+#define NPY_SIZEOF_LONG SIZEOF_LONG
+#define NPY_SIZEOF_FLOAT 4
+#define NPY_SIZEOF_COMPLEX_FLOAT 8
+#define NPY_SIZEOF_DOUBLE 8
+#define NPY_SIZEOF_COMPLEX_DOUBLE 16
+#define NPY_SIZEOF_LONGDOUBLE 16
+#define NPY_SIZEOF_COMPLEX_LONGDOUBLE 32
+#define NPY_SIZEOF_PY_INTPTR_T 8
+#define NPY_SIZEOF_INTP 8
+#define NPY_SIZEOF_UINTP 8
+#define NPY_SIZEOF_WCHAR_T 4
+#define NPY_SIZEOF_OFF_T 8
+#define NPY_SIZEOF_PY_LONG_LONG 8
+
+#define NPY_HAVE_LDOUBLE_IEEE_QUAD_LE 1
+
+#define NPY_HAVE_ENDIAN_H 1
+#define NPY_HAVE_DECL_ISNAN 1
+#define NPY_HAVE_DECL_ISINF 1
+#define NPY_HAVE_DECL_ISFINITE 1
+#define NPY_HAVE_DECL_SIGNBIT 1
+#define NPY_USE_C99_COMPLEX 1
+#define NPY_USE_C99_FORMATS 1
+#define NPY_VISIBILITY_HIDDEN __attribute__((visibility("hidden")))
+#define NPY_ABI_VERSION 0x02000000
+#define NPY_API_VERSION 0x0000000E
+
+#endif
+"""
+        targets = [
+            os.path.join(base, 'build', 'src.aarch64-linux-android-3.11',
+                         'numpy', 'core', 'include', 'numpy'),
+            os.path.join(base, 'numpy', 'core', 'include', 'numpy'),
+        ]
+        for out_dir in targets:
+            os.makedirs(out_dir, exist_ok=True)
+            dst = os.path.join(out_dir, '_numpyconfig.h')
+            with open(dst, 'w') as handle:
+                handle.write(content)
+            info('numpy: wrote {}'.format(dst))
 
     @staticmethod
     def _write_config_h(base, info):

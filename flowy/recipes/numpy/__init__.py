@@ -107,6 +107,59 @@ class NumpyCompatRecipe(NumpyRecipe):
                 shutil.copyfile(source, dst)
                 info('numpy: staged -> {}'.format(dst))
 
+            # npy_math_private.h includes "npy_config.h", which build_src would
+            # normally write into build/src.<plat>/numpy/core/include/numpy/.
+            # Because that pass produces nothing here, generate the header from
+            # numpy's own template so the include resolves:
+            #   npy_math_private.h:30:10: fatal error: 'npy_config.h' not found
+            # out_dir is .../build/src.<plat>/numpy/core/src/npymath; the
+            # include root numpy passes as -Ibuild/src.<plat>/numpy/core/include
+            # sits three levels up from npymath.
+            # out_dir is .../build/src.<plat>/numpy/core/src/npymath, so the
+            # "core" directory is two levels up; numpy adds
+            # -Ibuild/src.<plat>/numpy/core/include and the header lives in
+            # its numpy/ subdirectory.
+            core_dir = os.path.dirname(os.path.dirname(out_dir))
+            inc_dir = os.path.join(core_dir, 'include', 'numpy')
+            os.makedirs(inc_dir, exist_ok=True)
+            cfg = os.path.join(inc_dir, 'npy_config.h')
+            if not os.path.exists(cfg):
+                self._write_npy_config_h(base, cfg, info)
+
+    @staticmethod
+    def _write_npy_config_h(base, dst, info):
+        """Let numpy render npy_config.h with the real host/target values.
+
+        npy_config.h is produced by numpy.distutils.misc_util.generate_config_h()
+        during build_src; that pass emits nothing in this build, so call the
+        same function directly. Substituting constants by hand is not an option
+        -- the header carries SIZEOF_* and HAVE_* results that must match what
+        the cross compiler just probed.
+        """
+        import os
+        import subprocess
+        import sys
+
+        script = (
+            'import sys, os\n'
+            'sys.path.insert(0, os.getcwd())\n'
+            'from numpy.distutils.misc_util import generate_config_h\n'
+            'from numpy.distutils.conv_template import process_file\n'
+            'generate_config_h(%r)\n'
+            % dst
+        )
+        try:
+            out = subprocess.run([sys.executable, '-c', script], cwd=base,
+                                 capture_output=True, text=True, timeout=300)
+        except Exception as exc:  # pragma: no cover - defensive
+            info('numpy: generate_config_h failed: {}'.format(exc))
+            return
+        if os.path.exists(dst):
+            info('numpy: wrote {} ({} bytes)'.format(dst, os.path.getsize(dst)))
+        else:
+            info('numpy: generate_config_h produced nothing; rc={} err={}'
+                 .format(out.returncode, (out.stderr or '')[-400:]))
+
     patches = [
         join(P4A_PATCH_DIR, 'remove-default-paths.patch'),
         join(P4A_PATCH_DIR, 'add_libm_explicitly_to_build.patch'),

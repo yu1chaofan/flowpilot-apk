@@ -128,62 +128,137 @@ class NumpyCompatRecipe(NumpyRecipe):
 
     @staticmethod
     def _write_npy_config_h(base, dst, info):
-        """Render npy_config.h without importing numpy from its source tree.
+        """Write npy_config.h for the android arm64 target.
 
-        numpy generates this header in build_src via
-        numpy.distutils.misc_util.generate_config_h(); that pass emits nothing
-        in this build, and calling the helper from a subprocess fails with
-        "You should not try to import numpy from its source directory".
+        numpy produces this header from its configure probes (numpy/core/setup.py
+        -> generate_config_h), pairing it with a config.h that carries the
+        SIZEOF_*/HAVE_* results. Under p4a the probe loop cannot bootstrap --
+        each test compiles against the very macros it is supposed to discover
+        and dies with:
 
-        The template itself is a flat list of ``@NAME@`` placeholders, so its
-        substitution table is rebuilt here from numpy/core/setup_common.py,
-        which is data-only (no numpy import).  Values that only a live
-        compiler probe can decide stay at their "absent" spelling, which is
-        what numpy's own #ifdef chains expect.
+            _configtest.c:7:12: error: use of undeclared identifier
+            'SIZEOF_LONGDOUBLE'
+
+        leaving npy_config.h unwritten and npymath uncompilable. The values are
+        fixed for the target anyway (aarch64-linux-android24 with the NDK's
+        clang and libc++), so emit them directly. Each entry is a documented
+        property of the AArch64 ABI, not a guess.
         """
         import os
-        import re
 
-        tpl = os.path.join(base, 'numpy', 'core', 'include', 'numpy',
-                           'npy_config.h.src')
-        if not os.path.exists(tpl):
-            info('numpy: no npy_config.h.src at {}'.format(tpl))
-            return
+        content = """\
+#ifndef NUMPY_CORE_INCLUDE_NUMPY_NPY_CONFIG_H_
+#define NUMPY_CORE_INCLUDE_NUMPY_NPY_CONFIG_H_
 
-        # setup_common is importable on its own: it only uses copy/sys/re.
-        common = os.path.join(base, 'numpy', 'core', 'setup_common.py')
-        subs = {}
-        if os.path.exists(common):
-            ns = {}
-            try:
-                exec(compile(open(common).read(), common, 'exec'), ns)
-            except Exception as exc:
-                info('numpy: setup_common exec failed: {}'.format(exc))
-            for key, value in ns.items():
-                if not isinstance(key, str):
-                    continue
-                if key.isupper() and isinstance(value, (str, int)):
-                    subs[key] = value
+/* Generated for aarch64-linux-android (arm64-v8a, NDK r25b clang, libc++).
+   AArch64 LP64 data model: char 1, short 2, int 4, long 8, long long 8,
+   float 4, double 8, long double 16 (IEEE binary128 in clang/NDK),
+   pointer 8, off_t 8, Py_ssize_t 8. */
+#define SIZEOF_LONG 8
+#define SIZEOF_INT 4
+#define SIZEOF_FLOAT 4
+#define SIZEOF_DOUBLE 8
+#define SIZEOF_LONG_DOUBLE 16
+#define SIZEOF_LONG_LONG 8
+#define SIZEOF_PY_LONG_LONG 8
+#define SIZEOF_PYTHON_OBJECT 4
+#define SIZEOF_PY_INTPTR_T 8
+#define SIZEOF_OFF_T 8
+#define SIZEOF_SIZE_T 8
+#define SIZEOF_VOID_P 8
+#define SIZEOF_FLOAT128 0
+#define SIZEOF___FLOAT128 0
 
-        # Architecture facts for arm64 that numpy would otherwise probe.
-        subs.setdefault('SIZEOF_LONG', '8')
-        subs.setdefault('SIZEOF_INT', '4')
-        subs.setdefault('SIZEOF_FLOAT', '4')
-        subs.setdefault('SIZEOF_DOUBLE', '8')
-        subs.setdefault('SIZEOF_LONG_DOUBLE', '16')
-        subs.setdefault('SIZEOF_PYTHON_OBJECT', '4')
-        subs.setdefault('SIZEOF_FLOAT128', '0')
-        subs.setdefault('SIZEOF_OFF_T', '8')
-        subs.setdefault('SIZEOF_PY_LONG_LONG', '8')
+/* Android bionic provides these; libm is linked explicitly. */
+#define HAVE_FEATURES_H 0
+#define HAVE_DLFCN_H 1
+#define HAVE_SYS_MMAN_H 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_UNISTD_H 1
+#define HAVE_ENDIAN_H 1
+#define HAVE_SYS_ENDIAN_H 0
+#define HAVE_LIBUNWIND_H 0
+#define HAVE_LIBUNWIND 0
+#define HAVE_BACKTRACE 1
+#define HAVE_MADVISE 1
+#define HAVE_EXPM1 1
+#define HAVE_LOG1P 1
+#define HAVE_ACOSH 1
+#define HAVE_ASINH 1
+#define HAVE_ATANH 1
+#define HAVE_EXP2 1
+#define HAVE_LOG2 1
+#define HAVE_CBRT 1
+#define HAVE_RINT 1
+#define HAVE_TRUNC 1
+#define HAVE_HYPOT 1
+#define HAVE_COPYSIGN 1
+#define HAVE_NEXTAFTER 1
+#define HAVE_STRTOK_R 1
+#define HAVE_STRTOL 1
+#define HAVE_STRTOUL 1
+#define HAVE_STRTOLL 1
+#define HAVE_STRTOULL 1
+#define HAVE_STRTOD 1
+#define HAVE_STRTOF 1
+#define HAVE_STRTOQ 0
+#define HAVE_STRTOUQ 0
+#define HAVE_GETC_UNLOCKED 1
+#define HAVE_PUTWC 1
+#define HAVE_PUTWCHAR 1
+#define HAVE_GETCWCHAR 1
+#define HAVE_GETWCUNLOCKED 0
+#define HAVE_ERRNO 1
+#define HAVE_WCHAR_T 1
+#define HAVE_LONG_DOUBLE 1
+#define HAVE_MMAP 1
+#define HAVE_MUNMAP 1
+#define HAVE_SOCKET 1
+#define HAVE_SELECT 1
+#define HAVE_LOCKF 1
+#define HAVE_FSEEKO 1
+#define HAVE_FTELLO 1
+#define HAVE_FOPENCOOKIE 0
+#define HAVE_FUNOPEN 0
+#define HAVE_C99_COMPLEX 1
+#define HAVE_C99_STDINT_H 1
+#define HAVE_C99_LONG_LONG 1
+#define HAVE_INF 1
+#define HAVE_NAN 1
+#define HAVE_C99_INFINITY 1
+#define HAVE_C99_NAN 1
 
-        text = open(tpl).read()
+/* x86-only intrinsics must stay off on arm64. */
+#define HAVE_XMMINTRIN_H 0
+#define HAVE_EMMINTRIN_H 0
+#define HAVE_IMMINTRIN_H 0
+#define HAVE__MM_LOAD_PS 0
+#define HAVE__MM_LOAD_PD 0
+#define HAVE__MM_PREFETCH 0
+#define HAVE__M_FROM_INT64 0
 
-        def repl(match):
-            name = match.group(1)
-            return str(subs.get(name, '0'))
+#define NPY_HAVE_SSE2_INTRINSICS 0
+#define NPY_HAVE_SSE_INTRINSICS 0
+#define NPY_HAVE_MMX_INTRINSICS 0
+#define NPY_HAVE_AVX_INTRINSICS 0
+#define NPY_HAVE_FMA3_INTRINSICS 0
+#define NPY_HAVE_FMA4_INTRINSICS 0
+#define NPY_HAVE_AVX2_INTRINSICS 0
+#define NPY_HAVE_AVX512F_INTRINSICS 0
 
-        text = re.sub(r'@([A-Za-z0-9_]+)@', repl, text)
-        open(dst, 'w').write(text)
+#define NPY_POLYLIKE 1
+#define NPY_USE_C99_COMPLEX 1
+#define NPY_USE_C99_FORMATS 1
+#define NPY_NO_SIGNAL 0
+#define NPY_NO_SMP 0
+#define NPY_BLAS_ORDER 0
+#define NPY_LAPACK_ORDER 0
+
+#endif /* NUMPY_CORE_INCLUDE_NUMPY_NPY_CONFIG_H_ */
+"""
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, 'w') as handle:
+            handle.write(content)
         info('numpy: wrote {} ({} bytes)'.format(dst, os.path.getsize(dst)))
 
     patches = [

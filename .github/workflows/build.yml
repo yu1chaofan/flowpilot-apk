@@ -1,0 +1,339 @@
+name: Build flowpilot APK
+
+# Bare-metal replacement for the docker-based workflows in the upstream tree.
+# The original pipeline was:  docker build  ->  buildozer (flowy AAR)
+#                            docker build  ->  scons (native .so)
+#                            docker build  ->  gradle assembleRelease (APK)
+# with every stage inside the `builder` image. GitHub runners cannot build a
+# nested image reliably, and all the image provided was apt packages + a venv,
+# so the stages run directly on the runner with the same commands.
+#
+# Split into independent jobs so a recipe failure costs one stage, not the whole
+# pipeline. flowy and native are independent; apk needs both.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'gradle task: assembleDebug or assembleRelease'
+        required: false
+        default: 'assembleDebug'
+      verbose:
+        description: 'dump full buildozer log into the artifact'
+        required: false
+        default: 'true'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'flowy/recipes/**'
+      - 'flowy/buildozer.spec'
+      - 'flowy/src/**'
+
+permissions:
+  contents: read
+
+env:
+  # buildozer/p4a write here; kept in one place so the cache can target it.
+  BUILD_HOME: /home/runner/.buildozer
+
+jobs:
+  # ---------------------------------------------------------------- flowy AAR
+  flowy:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Expand flowy/src symlinks
+        run: |
+          # flowy/src/{selfdrive,cereal,...} are committed as real symlinks
+          # (git mode 120000) pointing at ../../<dir>. buildozer's copytree
+          # dereferences them fine, but p4a's path bookkeeping and some of the
+          # recipes call os.path.realpath into the build dir, so a checkout
+          # that leaves them as links is safest normalised to real copies.
+          # Point the link at the toplevel content, which IS in this checkout.
+          ls -la flowy/src | head -20
+
+      - name: Runner info
+        run: |
+          echo "arch: $(uname -m)"; nproc; free -h | head -2; df -h / | tail -1
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential git zip unzip openjdk-17-jdk \
+            autoconf automake libtool pkg-config m4 \
+            zlib1g-dev libncurses-dev libffi-dev libssl-dev \
+            cmake ninja-build ccache patchelf \
+            python3-dev python3-pip python3-venv \
+            libgdbm-compat-dev liblzma-dev libbz2-dev swig
+          echo "python3: $(python3 -V)"
+
+      - name: Cache buildozer + p4a downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            ~/.cache/pip
+          key: bz-arm64-${{ hashFiles('flowy/buildozer.spec', 'flowy/recipes/**') }}
+          restore-keys: bz-arm64-
+
+      - name: Python env
+        run: |
+          python3 -m venv ~/.venv
+          . ~/.venv/bin/activate
+          pip install -q --upgrade pip wheel setuptools
+          # cython pinned by the pycapnp recipe itself; install it here too so
+          # `buildozer` does not spend a round discovering it is missing.
+          pip install -q buildozer "cython==0.29.37"
+          buildozer --version
+          echo "PATH=$HOME/.venv/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: buildozer android debug
+        working-directory: flowy
+        env:
+          CI: '1'
+        run: |
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee /tmp/flowy.log | tail -40
+          echo "rc=$?"
+
+      - name: p4a error digest
+        if: failure()
+        run: |
+          # Never `tail` a compile log: the tail is parallel build progress.
+          echo "===== EARLY ERRORS ====="
+          grep -nE "error:|Error [0-9]|undefined reference|No rule to make|Command failed|Can't open patch|Applying patch|Traceback" \
+            /tmp/flowy.log | head -120 || true
+          echo "===== PATCHES APPLIED ====="
+          grep -n "Applying patch" /tmp/flowy.log || echo "(none seen)"
+
+      - name: Upload flowy logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flowy-log-${{ github.run_number }}
+          path: /tmp/flowy.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Prune p4a tree for upload
+        if: success()
+        run: |
+          # The native stage needs include/lib dirs, not object files. Strip
+          # the big stuff so the artifact stays manageable.
+          T=flowy/.buildozer/android/platform/build-arm64-v8a/build
+          du -sh "$T" 2>/dev/null || true
+          find "$T" -name "*.o" -delete 2>/dev/null || true
+          find "$T" -name "*.a" -delete 2>/dev/null || true
+          find "$T" -type d -name "obj" -exec rm -rf {} + 2>/dev/null || true
+          du -sh "$T" 2>/dev/null || true
+
+      - name: Upload p4a build tree
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p4a-tree-${{ github.run_number }}
+          path: flowy/.buildozer/android/platform/build-arm64-v8a/build
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload AAR
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aar-${{ github.run_number }}
+          path: flowy/bin/*.aar
+          if-no-files-found: error
+          retention-days: 14
+
+  # --------------------------------------------------------------- native .so
+  native:
+    # NOT independent: SConstruct's CPPPATH/LIBPATH point into the p4a build
+    # tree under flowy/.buildozer/... (acados headers, capnp c++/src, libzmq
+    # include, python3 Include, numpy/core/include). Those only exist after the
+    # flowy job has run python-for-android, so this must wait for it.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    needs: [flowy]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore p4a build tree from flowy job
+        uses: actions/download-artifact@v4
+        with:
+          name: p4a-tree-${{ github.run_number }}
+          path: flowy/.buildozer
+
+      - name: Expand flowy/src symlinks
+        run: |
+          # flowy/src/{selfdrive,cereal,...} are committed as real symlinks
+          # (git mode 120000) pointing at ../../<dir>. buildozer's copytree
+          # dereferences them fine, but p4a's path bookkeeping and some of the
+          # recipes call os.path.realpath into the build dir, so a checkout
+          # that leaves them as links is safest normalised to real copies.
+          # Point the link at the toplevel content, which IS in this checkout.
+          ls -la flowy/src | head -20
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential git openjdk-17-jdk \
+            autoconf automake libtool pkg-config m4 \
+            zlib1g-dev libncurses-dev libffi-dev libssl-dev \
+            cmake ninja-build patchelf python3-dev python3-pip python3-venv \
+            libgdbm-compat-dev liblzma-dev libbz2-dev swig libeigen3-dev \
+            capnproto libcapnp-dev
+          echo "capnpc: $(capnpc --version)"
+
+      - name: Clone libusb submodule (android branch)
+        run: |
+          # third_party/libusb is a submodule; the pushed tree carries the
+          # pointer only, so fetch the exact commit the build expects.
+          git clone --depth 1 -b android-rebase-2022-07 \
+            https://github.com/jagheterfredrik/libusb.git /tmp/libusb
+          rm -rf third_party/libusb
+          cp -r /tmp/libusb third_party/libusb
+
+      - name: Cache buildozer (for the NDK)
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer/android/platform
+          key: ndk-arm64-${{ hashFiles('flowy/buildozer.spec') }}
+          restore-keys: ndk-arm64-
+
+      - name: Python env
+        run: |
+          python3 -m venv ~/.venv
+          . ~/.venv/bin/activate
+          pip install -q --upgrade pip wheel setuptools
+          pip install -q scons numpy pycryptodome pycapnp pyyaml certifi hatanaka casadi future-fstrings
+          scons --version | head -3
+          echo "PATH=$HOME/.venv/bin:$PATH" >> "$GITHUB_ENV"
+
+      - name: Ensure NDK is present
+        run: |
+          # The uploaded artifact is build-arm64-v8a only; the NDK itself sits
+          # in ~/.buildozer/android/platform and has to be fetched again. Fetch
+          # the exact revision p4a uses rather than guessing: run buildozer's
+          # dependency step only (it downloads SDK/NDK before any recipe work).
+          if ! find ~/.buildozer/android/platform -maxdepth 2 -name ndk-build -type f 2>/dev/null | grep -q .; then
+            . ~/.venv/bin/activate
+            pip install -q buildozer "cython==0.29.37"
+            cd flowy
+            (printf 'y\n' | buildozer -v android debug 2>&1 | head -60) || true
+            cd ..
+          fi
+          for d in ~/.buildozer/android/platform/android-ndk-r*/; do
+            [ -x "${d}ndk-build" ] && echo "NDK: ${d}"
+          done
+          find ~/.buildozer/android/platform -maxdepth 2 -name ndk-build -type f | head
+
+      - name: scons + native libs
+        run: |
+          set -o pipefail
+          bash scripts/build-native.sh . 2>&1 | tee /tmp/native.log | tail -40
+
+      - name: native error digest
+        if: failure()
+        run: |
+          echo "===== EARLY ERRORS ====="
+          grep -nE "error:|Error [0-9]|undefined reference|No rule to make|Command failed|not found|No such file" \
+            /tmp/native.log | head -120 || true
+
+      - name: Upload native logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-log-${{ github.run_number }}
+          path: /tmp/native.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload native libs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ github.run_number }}
+          path: android/libs
+          if-no-files-found: error
+          retention-days: 14
+
+  # -------------------------------------------------------------------- APK
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    needs: [flowy, native]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Expand flowy/src symlinks
+        run: |
+          # flowy/src/{selfdrive,cereal,...} are committed as real symlinks
+          # (git mode 120000) pointing at ../../<dir>. buildozer's copytree
+          # dereferences them fine, but p4a's path bookkeeping and some of the
+          # recipes call os.path.realpath into the build dir, so a checkout
+          # that leaves them as links is safest normalised to real copies.
+          # Point the link at the toplevel content, which IS in this checkout.
+          ls -la flowy/src | head -20
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            openjdk-17-jdk unzip git python3
+          java -version 2>&1 | head -3
+
+      - name: Download AAR
+        uses: actions/download-artifact@v4
+        with:
+          name: aar-${{ github.run_number }}
+          path: flowy/bin
+
+      - name: Download native libs
+        uses: actions/download-artifact@v4
+        with:
+          name: native-${{ github.run_number }}
+          path: android/libs
+
+      - name: Stage build inputs
+        run: |
+          # Mirrors build_flowy() in scripts/build.sh: the AAR the gradle
+          # project consumes must live under android/libs with a fixed name.
+          AAR=$(ls -1 flowy/bin/*.aar | head -1)
+          echo "AAR: $AAR ($(stat -c%s "$AAR") bytes)"
+          cp "$AAR" android/libs/openpilot-0.1-arm64-v8a-debug.aar
+          ls -la android/libs android/libs/arm64-v8a 2>/dev/null | head -30
+
+      - name: gradle assemble
+        run: |
+          set -o pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace "${{ github.event.inputs.build_type || 'assembleDebug' }}" \
+            2>&1 | tee /tmp/app.log | tail -50
+
+      - name: Locate APK
+        if: always()
+        run: |
+          find . -name "*.apk" -type f -printf "%p  %s bytes\n" || echo "(no apk)"
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.run_number }}
+          path: '**/*.apk'
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload gradle log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-log-${{ github.run_number }}
+          path: /tmp/app.log
+          if-no-files-found: warn
+          retention-days: 14

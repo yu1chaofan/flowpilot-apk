@@ -1,0 +1,10 @@
+Import('env', 'arch', 'cereal', 'messaging', 'common', 'modelparser')
+
+libs = [common, 'cereal', 'messaging',
+        'zmq', 'capnp', 'kj', 'z', 'modelparser', 'json11', 'log']
+
+src = ['jniconvert.cpp']
+
+env.SharedLibrary('thneedrunner', src, LIBS=libs)
+
+env.SharedLibrary('pandaflash', 'pandaflash.cpp', LIBS=['log', 'usb-1.0'])

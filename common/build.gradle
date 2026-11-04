@@ -1,0 +1,44 @@
+plugins {
+    id 'java-library'
+}
+
+repositories {
+    mavenCentral()
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['java']
+        }
+        resources {
+            srcDirs = ['resources']
+        }
+    }
+}
+
+dependencies {
+    implementation 'org.deephacks.lmdbjni:lmdbjni-linux64:0.4.6'
+//    implementation files("$rootProject.projectDir/third_party/zmq.jar")
+    // https://mvnrepository.com/artifact/org.zeromq/jeromq
+    implementation 'org.zeromq:jeromq:0.6.0'
+
+    implementation project(":messaging")
+
+    implementation ("org.nd4j:nd4j-native-platform:$rootProject.nd4j_version")
+            {
+                exclude ((HashMap) [group: 'org.bytedeco', module: 'openblas-platform'])
+                exclude ((HashMap) [group: 'org.bytedeco', module: 'mkl-platform'])
+                exclude ((HashMap) [group: 'org.nd4j', module: 'nd4j-native'])
+            }
+    implementation "org.bytedeco:javacpp:$rootProject.javacpp_version"
+    implementation "org.bytedeco:javacpp:$rootProject.javacpp_version:$rootProject.javacpp_platform_suffix"
+    implementation "org.nd4j:nd4j-native:$rootProject.nd4j_version"
+    implementation "org.nd4j:nd4j-native:$rootProject.nd4j_version:$rootProject.javacpp_platform_suffix"
+    implementation "org.bytedeco:openblas:$rootProject.openblas_version-$rootProject.javacpp_version"
+    implementation "org.bytedeco:openblas:$rootProject.openblas_version-$rootProject.javacpp_version:$rootProject.javacpp_platform_suffix"
+    implementation "com.squareup.okhttp3:okhttp:4.10.0"
+    implementation "com.badlogicgames.gdx:gdx-freetype:$gdxVersion"
+    implementation "org.bytedeco:opencv:$opencvVersion"
+    implementation "org.jocl:jocl:$joclVersion"
+}

@@ -1,0 +1,20 @@
+--- a/numpy/core/setup.py
++++ b/numpy/core/setup.py
+@@ -699,7 +699,16 @@
+                 # without doing big changes to config.
+                 # c tested first, compiler should be here
+                 bk_c = config_cmd.compiler
+-                config_cmd.compiler = bk_c.cxx_compiler()
++                # Newer setuptools distutils no longer exposes cxx_compiler().
++                # Rather than substituting the C compiler (which lacks
++                # customize() that numpy calls right after), skip the C++
++                # feature probe entirely: the toolchain already compiled the C
++                # sample above, and the real extensions are built with the C++
++                # compiler later regardless.
++                _cxx = getattr(bk_c, 'cxx_compiler', None)
++                if _cxx is None:
++                    continue
++                config_cmd.compiler = _cxx()
+             st = config_cmd.try_link(test_code, lang=lang)
+             if not st:
+                 # rerun the failing command in verbose mode

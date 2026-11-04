@@ -1,0 +1,13 @@
+--- a/c++/src/kj/filesystem-disk-unix.c++
++++ b/c++/src/kj/filesystem-disk-unix.c++
+@@ -1648,8 +1648,8 @@
+ class DiskFilesystem final: public Filesystem {
+ public:
+   DiskFilesystem()
+-      : root(openDir("/")),
+-        current(openDir(".")),
++      : root(openDir("/data/data/ai.flow.android/files/app")),
++        current(openDir("/data/data/ai.flow.android/files/app")),
+         currentPath(computeCurrentPath()) {}
+ 
+   const Directory& getRoot() const override {

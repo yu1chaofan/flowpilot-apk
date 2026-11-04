@@ -1,0 +1,28 @@
+Import('env', 'messaging', 'common')
+lenv = env.Clone()
+
+libs = ['capnp', 'zmq', 'kj', 'messaging', common]
+
+common_src = [
+  "models/commonmodel.cc",
+  "models/driving.cc",
+  "models/nav.cc",
+]
+
+modelparser = lenv.SharedLibrary('modelparser', common_src, LIBS=libs)
+
+lenv.Program('modelparsed', ["modelparsed.cc"]+common_src, LIBS=libs)
+lenv.SharedLibrary('libmodelparsed.so', ["modelparsed.cc"]+common_src, LIBS=libs)
+
+tenv = env.Clone()
+tenv['CXXFLAGS'] += ['-DQCOM2']
+
+Import('gpucommon')
+thneed_src_common = [
+  "thneed/thneed_common.cc",
+  "thneed/serialize.cc",
+]
+thneed_src = thneed_src_common + ["thneed/thneed_qcom2.cc"]
+thneed = tenv.SharedLibrary('thneed', thneed_src, LIBS=[common, gpucommon, 'OpenCL', 'dl', 'zmq'])
+
+Export('thneed', 'modelparser')

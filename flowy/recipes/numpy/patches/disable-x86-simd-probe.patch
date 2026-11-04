@@ -1,0 +1,105 @@
+
+--- a/numpy/core/setup_common.py
++++ b/numpy/core/setup_common.py
+@@ -1,4 +1,6 @@
+ # Code common to build tools
++import os
++import re
+ import sys
+ import warnings
+ import copy
+@@ -115,16 +117,59 @@ OPTIONAL_STDFUNCS = ["expm1", "log1p", "acosh", "asinh", "atanh",
+         "backtrace", "madvise"]
+ 
+ 
+-OPTIONAL_HEADERS = [
++# The x86/x64 SIMD headers are probed unconditionally, because OPTIONAL_HEADERS
++# is a single architecture-agnostic list.  When cross-compiling for arm64 the
++# probe still runs clang with the x86 headers, and clang ships them for every
++# target, only to reject them at the very first line:
++#
++#   .../clang/14.0.6/include/xmmintrin.h:14:2:
++#   error: "This header is only meant to be used on x86 and x64 architecture"
++#
++# with mmintrin.h failing behind it:
++#
++#   .../mmintrin.h:54:12: error: invalid conversion between vector type
++#   '__m64' (vector of 1 'long long' value) and integer type 'int' of
++#   different size
++#
++# numpy consumes HAVE_XMMINTRIN_H / HAVE_EMMINTRIN_H / HAVE_IMMINTRIN_H only
++# through npy_common.h, which gates them behind HAVE__MM_LOAD_PS et al. and
++# then defines NPY_HAVE_SSE2_INTRINSICS -- used exclusively by x86 sources.
++# Dropping the three headers from the probe list on arm therefore changes
++# nothing about the produced code, it only stops the doomed probes.
++# (This is not the same thing as NPY_DISABLE_CPU_FEATURES, which numpy only
++# parses at *runtime* in npy_cpu_features.c and which never reaches distutils.)
++_OPTIONAL_HEADERS_SIMD_X86 = [
+ # sse headers only enabled automatically on amd64/x32 builds
+                 "xmmintrin.h",  # SSE
+                 "emmintrin.h",  # SSE2
+                 "immintrin.h",  # AVX
++]
++_OPTIONAL_HEADERS = [
+                 "features.h",  # for glibc version linux
+                 "xlocale.h",  # see GH#8367
+                 "dlfcn.h", # dladdr
+                 "sys/mman.h", #madvise
+ ]
++# Arm is the one target that must not probe them: clang rejects the headers
++# for arm/aarch64 outright, while ppc, s390x, riscv and the x86 family keep
++# the historical behaviour unchanged.
++#   - _PYTHON_HOST_PLATFORM is set by python-for-android's NumpyRecipe to the
++#     NDK target triple, so it names the *target* architecture.
++#   - sys.platform is the *host* platform -- always "linux" inside the p4a
++#     container -- and can never stand in for the target on its own.
++_TARGET_PLATFORM = os.environ.get("_PYTHON_HOST_PLATFORM", "")
++# "aarch64" does not start with "arm", so both spellings have to be listed.
++_IS_ARM_TARGET = _TARGET_PLATFORM.startswith(
++    ("arm", "aarch64", "armv7", "armv8")
++)
++_OPTIONAL_HEADERS_PROBE_X86_SIMD = not _IS_ARM_TARGET and bool(
++    _TARGET_PLATFORM
++    or re.match(r"^(linux|darwin|win32|cygwin)", getattr(sys, "platform", ""))
++)
++
++if _OPTIONAL_HEADERS_PROBE_X86_SIMD:
++    _OPTIONAL_HEADERS = _OPTIONAL_HEADERS_SIMD_X86 + _OPTIONAL_HEADERS
++OPTIONAL_HEADERS = _OPTIONAL_HEADERS
+ 
+ # optional gcc compiler builtins and their call arguments and optional a
+ # required header and definition name (HAVE_ prepended)
+@@ -136,12 +181,6 @@ OPTIONAL_INTRINSICS = [("__builtin_isnan", '5.'),
+                        ("__builtin_bswap64", '5u'),
+                        ("__builtin_expect", '5, 0'),
+                        ("__builtin_mul_overflow", '5, 5, (int*)5'),
+-                       # MMX only needed for icc, but some clangs don't have it
+-                       ("_m_from_int64", '0', "emmintrin.h"),
+-                       ("_mm_load_ps", '(float*)0', "xmmintrin.h"),  # SSE
+-                       ("_mm_prefetch", '(float*)0, _MM_HINT_NTA',
+-                        "xmmintrin.h"),  # SSE
+-                       ("_mm_load_pd", '(double*)0', "emmintrin.h"),  # SSE2
+                        ("__builtin_prefetch", "(float*)0, 0, 3"),
+                        # check that the linker can handle avx
+                        ("__asm__ volatile", '"vpand %xmm1, %xmm2, %xmm3"',
+@@ -156,6 +195,20 @@ OPTIONAL_INTRINSICS = [("__builtin_isnan", '5.'),
+                         "stdio.h", "LINK_AVX512_SKX"),
+                        ("__asm__ volatile", '"xgetbv"', "stdio.h", "XGETBV"),
+                        ]
++if _OPTIONAL_HEADERS_PROBE_X86_SIMD:
++    # Same x86-only headers as in OPTIONAL_HEADERS above: probing them asks the
++    # cross compiler to compile <xmmintrin.h>/<emmintrin.h> for arm64, which is
++    # the very error this recipe works around.  The intrinsics themselves are
++    # guarded by NPY_HAVE_SSE2_INTRINSICS downstream, so on a non-x86 target the
++    # HAVE__MM_* defines are never consulted.
++    OPTIONAL_INTRINSICS[7:7] = [
++        # MMX only needed for icc, but some clangs don't have it
++        ("_m_from_int64", '0', "emmintrin.h"),
++        ("_mm_load_ps", '(float*)0', "xmmintrin.h"),  # SSE
++        ("_mm_prefetch", '(float*)0, _MM_HINT_NTA',
++         "xmmintrin.h"),  # SSE
++        ("_mm_load_pd", '(double*)0', "emmintrin.h"),  # SSE2
++    ]
+ 
+ # function attributes
+ # tested via "int %s %s(void *);" % (attribute, name)

@@ -1,0 +1,13 @@
+# Build artifacts -- CI produces these, never stores them.
+.buildozer/
+flowy/.buildozer/
+flowy/bin/
+android/libs/*.aar
+android/build/
+.gradle/
+*/build/
+__pycache__/
+*.pyc
+*.so
+*.a
+*.o

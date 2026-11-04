@@ -1,0 +1,36 @@
+--- orig/setup.py	2026-11-01 11:44:13.876854143 +0800
++++ new/setup.py	2026-11-01 12:03:06.678451208 +0800
+@@ -9,7 +9,6 @@
+ import struct
+ import sys
+ 
+-import pkgconfig
+ 
+ from distutils.command.clean import clean as _clean
+ 
+@@ -117,7 +116,7 @@
+     def run(self):
+         if force_bundled_libcapnp:
+             need_build = True
+-        elif force_system_libcapnp:
++        elif force_system_libcapnp or True:  # p4a ships libcapnp as the 'capnp' recipe
+             need_build = False
+         else:
+             # Try to use capnp executable to find include and lib path
+@@ -127,16 +126,6 @@
+                 self.library_dirs += [os.path.join(os.path.dirname(capnp_executable), '..', 'lib{}'.format(8 * struct.calcsize("P")))]
+                 self.library_dirs += [os.path.join(os.path.dirname(capnp_executable), '..', 'lib')]
+ 
+-            # Look for capnproto using pkg-config (and minimum version)
+-            try:
+-                if pkgconfig.installed('capnp', '>= 0.8.0'):
+-                    need_build = False
+-                else:
+-                    need_build = True
+-            except EnvironmentError:
+-                # pkg-config not available in path
+-                need_build = True
+-
+         if need_build:
+             print(
+                 "*WARNING* no libcapnp detected or rebuild forced. "

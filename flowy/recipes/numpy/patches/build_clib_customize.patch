@@ -1,0 +1,58 @@
+--- a/numpy/distutils/command/build_clib.py
++++ b/numpy/distutils/command/build_clib.py
+@@ -103,8 +103,22 @@
+         self.compiler = new_compiler(compiler=self.compiler,
+                                      dry_run=self.dry_run,
+                                      force=self.force)
+-        self.compiler.customize(self.distribution,
+-                                need_cxx=self.have_cxx_sources())
++        # numpy.distutils patches customize() onto its own CCompiler class via
++        # replace_method(), but new_compiler() here returns setuptools'
++        # UnixCCompiler, which never got that patch:
++        #   AttributeError: 'UnixCCompiler' object has no attribute 'customize'
++        # Skipping it entirely left the compiler without p4a's include/library
++        # dirs, so later stages failed with
++        #   fatal error: npy_math_private.h: No such file or directory
++        # Run distutils' own customize_compiler() instead -- that is the real
++        # work, and numpy's wrapper only adds bookkeeping on top.
++        _customize = getattr(self.compiler, 'customize', None)
++        if _customize is not None:
++            _customize(self.distribution,
++                       need_cxx=self.have_cxx_sources())
++        else:
++            from distutils.sysconfig import customize_compiler
++            customize_compiler(self.compiler)
+ 
+         if self.warn_error:
+             self.compiler.compiler.append('-Werror')
+@@ -112,10 +126,16 @@
+ 
+         libraries = self.libraries
+         self.libraries = None
+-        self.compiler.customize_cmd(self)
++        # numpy.distutils attaches customize_cmd via replace_method on its own
++        # CCompiler; setuptools' UnixCCompiler has no such method.
++        _customize_cmd = getattr(self.compiler, 'customize_cmd', None)
++        if _customize_cmd is not None:
++            _customize_cmd(self)
+         self.libraries = libraries
+ 
+-        self.compiler.show_customization()
++        _show = getattr(self.compiler, 'show_customization', None)
++        if _show is not None:
++            _show()
+ 
+         if not self.disable_optimization:
+             dispatch_hpath = os.path.join("numpy", "distutils", "include", "npy_cpu_dispatch_config.h")
+@@ -374,7 +394,10 @@
+ 
+         if cxx_sources:
+             log.info("compiling C++ sources")
+-            cxx_compiler = compiler.cxx_compiler()
++            # Same missing-method situation; distutils selects the language
++            # from the source extension, so .cpp still compiles as C++.
++            _cxx_factory = getattr(compiler, 'cxx_compiler', None)
++            cxx_compiler = _cxx_factory() if _cxx_factory else compiler
+             cxx_objects = cxx_compiler.compile(
+                 cxx_sources,
+                 output_dir=self.build_temp,

@@ -1,0 +1,11 @@
+--- a/external/qpoases/include/qpOASES_e/MessageHandling.h
++++ b/external/qpoases/include/qpOASES_e/MessageHandling.h
+@@ -39,6 +39,7 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <math.h>
+ #include <assert.h>
++#include <stdlib.h>  /* malloc/calloc prototypes; NDK r28c clang makes implicit decls hard errors */
+ 
+ #include <qpOASES_e/Constants.h>
+ 

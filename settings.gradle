@@ -1,0 +1,19 @@
+include 'headless', 'android', 'desktop'
+include ':ui'
+project(':ui').projectDir = file('selfdrive/ui')
+include ':messaging'
+project(':messaging').projectDir = file('cereal/messaging')
+include ':definitions'
+project(':definitions').projectDir = file('cereal')
+include ':modeld'
+project(':modeld').projectDir = file('selfdrive/modeld')
+include ':sensord'
+project(':sensord').projectDir = file('selfdrive/sensord')
+include ':launcher'
+project(':launcher').projectDir = file('selfdrive/launcher')
+include ':calibration'
+project(':calibration').projectDir = file('selfdrive/calibration')
+include ':common'
+project(':common').projectDir = file('common')
+include ':hardware'
+project(':hardware').projectDir = file('system/hardware')

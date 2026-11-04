@@ -1,0 +1,23 @@
+[submodule "rednose_repo"]
+	path = rednose_repo
+	url = https://github.com/flowdriveai/rednose.git
+[submodule "laika_repo"]
+	path = laika_repo
+	url = https://github.com/flowdriveai/laika.git
+[submodule "third_party/libusb"]
+	path = third_party/libusb
+	url = https://github.com/jagheterfredrik/libusb.git
+	branch = android-rebase-2022-07
+[submodule "third_party/libzmq"]
+	path = third_party/libzmq
+	url = https://github.com/zeromq/libzmq.git
+	#v4.3.5
+[submodule "docker/capnproto-java"]
+	path = docker/capnproto-java
+	url = https://github.com/capnproto/capnproto-java.git
+[submodule "third_party/json11"]
+	path = third_party/json11
+	url = https://github.com/dropbox/json11.git
+[submodule "third_party/eigen3"]
+	path = third_party/eigen3
+	url = https://gitlab.com/libeigen/eigen.git

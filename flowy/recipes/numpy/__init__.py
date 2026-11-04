@@ -93,15 +93,24 @@ class NumpyCompatRecipe(NumpyRecipe):
              '        _customize_cmd = getattr(self.compiler, "customize_cmd", None)\n'
              '        if _customize_cmd is not None:\n'
              '            _customize_cmd(self)\n'),
-            ('            self.compiler.show_customization()\n',
-             '            _show = getattr(self.compiler, "show_customization", None)\n'
-             '            if _show is not None:\n'
-             '                _show()\n'),
         ]
+        # show_customization() is indented differently across numpy releases,
+        # so it is matched by pattern rather than by an exact line.
+        import re as _re
         for needle, replacement in substitutions:
             if needle in text:
                 text = text.replace(needle, replacement, 1)
                 changed += 1
+
+        def _drop_show(match):
+            indent = match.group(1)
+            return (indent + '_show = getattr(self.compiler, "show_customization", None)\n'
+                    + indent + 'if _show is not None:\n'
+                    + indent + '    _show()\n')
+
+        text, n = _re.subn(r'(?m)^(\s*)self\.compiler\.show_customization\(\)\n',
+                           _drop_show, text)
+        changed += n
         if not changed:
             info('numpy: build_ext.py already handled')
             return

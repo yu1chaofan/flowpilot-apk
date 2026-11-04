@@ -631,6 +631,19 @@ class NumpyCompatRecipe(NumpyRecipe):
    decorators expands to an undeclared identifier:
        npy_math_internal.h:599: use of undeclared identifier 'NPY_CAT'
    A two-level CAT is the standard token-paste idiom. */
+/* npymath's npy_math_internal.h.src decorates every per-precision symbol with
+   NPY_CAT(X, l) / NPY_CAT(X, f) / NPY_CAT(X, ).
+
+   numpy normally gets NPY_CAT from numpy/core/include/numpy/utils.h, but the
+   npymath translation units never include that header -- the generated
+   npy_math_internal.h is supposed to arrive with the macro already in scope.
+   Defining the standard two-level paste here is equivalent and keeps the file
+   self-contained; the #ifndef leaves utils.h free to redefine it later. */
+#ifndef NPY_CAT
+#define NPY_CAT_(a, b) a ## b
+#define NPY_CAT(a, b) NPY_CAT_(a, b)
+#endif
+
 #define NPY_POLYLIKE 1
 #define NPY_USE_C99_COMPLEX 1
 #define NPY_USE_C99_FORMATS 1

@@ -145,6 +145,7 @@ class NumpyCompatRecipe(NumpyRecipe):
             self._write_npy_config_h(base, cfg, info)
 
         self._write_npy_fpmath_h(base, info)
+        self._write_config_h(base, info)
 
     @staticmethod
     def _mirror_numpy_headers(base, info):
@@ -280,6 +281,123 @@ class NumpyCompatRecipe(NumpyRecipe):
                             handle.write(text)
                     expanded += 1
         info('numpy: expanded {} .src templates'.format(expanded))
+
+    @staticmethod
+    def _write_config_h(base, info):
+        """Write numpy's config.h for aarch64.
+
+        numpy's config.h carries the SIZEOF_*/HAVE_*/inline results from its
+        configure probes, and _numpyconfig.h re-exports them as the NPY_*
+        names the public headers use:
+
+            #define NPY_SIZEOF_SHORT SIZEOF_SHORT
+
+        With config.h missing, SIZEOF_SHORT is an unknown identifier in #if
+        expressions and evaluates to 0 -- which makes
+        NPY_SIZEOF_LONGDOUBLE == NPY_SIZEOF_DOUBLE true for the wrong reason
+        and leaves npy_math_internal.h choosing a decorator whose CAT() helper
+        was never declared:
+
+            #define NPY__FP_SFX(X) NPY_CAT(X, l)  -> use of undeclared 'NPY_CAT'
+
+        The values below are the AArch64 LP64 answers the probes would return.
+        """
+        import os
+
+        content = """\
+#ifndef NUMPY_CORE_SRC_COMMON_CONFIG_H_
+#define NUMPY_CORE_SRC_COMMON_CONFIG_H_
+
+/* aarch64-linux-android, NDK r25b clang, libc++ */
+#define SIZEOF_LONG 8
+#define SIZEOF_INT 4
+#define SIZEOF_SHORT 2
+#define SIZEOF_FLOAT 4
+#define SIZEOF_DOUBLE 8
+#define SIZEOF_LONG_DOUBLE 16
+#define SIZEOF_LONG_LONG 8
+#define SIZEOF_PY_LONG_LONG 8
+#define SIZEOF_PYTHON_OBJECT 4
+#define SIZEOF_PY_INTPTR_T 8
+#define SIZEOF_OFF_T 8
+#define SIZEOF_SIZE_T 8
+#define SIZEOF_VOID_P 8
+#define SIZEOF_WCHAR_T 4
+#define SIZEOF_PTHREAD_T 8
+#define SIZEOF_TIME_T 8
+#define SIZEOF_OFF64_T 8
+
+#define HAVE_LONG_DOUBLE 1
+#define HAVE_BACKTRACE 1
+#define HAVE_MADVISE 1
+#define HAVE_MMAP 1
+#define HAVE_MUNMAP 1
+#define HAVE_SOCKET 1
+#define HAVE_SELECT 1
+#define HAVE_LOCKF 1
+#define HAVE_FSEEKO 1
+#define HAVE_FTELLO 1
+#define HAVE_STRTOK_R 1
+#define HAVE_STRTOL 1
+#define HAVE_STRTOUL 1
+#define HAVE_STRTOLL 1
+#define HAVE_STRTOULL 1
+#define HAVE_STRTOD 1
+#define HAVE_STRTOF 1
+#define HAVE_EXPM1 1
+#define HAVE_LOG1P 1
+#define HAVE_ACOSH 1
+#define HAVE_ASINH 1
+#define HAVE_ATANH 1
+#define HAVE_EXP2 1
+#define HAVE_LOG2 1
+#define HAVE_CBRT 1
+#define HAVE_RINT 1
+#define HAVE_TRUNC 1
+#define HAVE_HYPOT 1
+#define HAVE_COPYSIGN 1
+#define HAVE_NEXTAFTER 1
+#define HAVE_ERRNO 1
+#define HAVE_WCHAR_T 1
+#define HAVE_GETC_UNLOCKED 1
+#define HAVE_PUTWC 1
+#define HAVE_FOPENCOOKIE 0
+#define HAVE_FUNOPEN 0
+#define HAVE_C99_COMPLEX 1
+#define HAVE_C99_STDINT_H 1
+#define HAVE_INF 1
+#define HAVE_NAN 1
+#define HAVE_C99_INFINITY 1
+#define HAVE_C99_NAN 1
+#define HAVE_DLFCN_H 1
+#define HAVE_UNISTD_H 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_SYS_MMAN_H 1
+#define HAVE_FEATURES_H 0
+#define HAVE_ENDIAN_H 1
+#define HAVE_SYS_ENDIAN_H 1
+#define HAVE_LIBUNWIND_H 0
+#define HAVE_LIBUNWIND 0
+#define HAVE_XMMINTRIN_H 0
+#define HAVE_EMMINTRIN_H 0
+#define HAVE_IMMINTRIN_H 0
+
+#define inline inline
+#define restrict __restrict__
+
+#endif /* NUMPY_CORE_SRC_COMMON_CONFIG_H_ */
+"""
+        targets = [
+            os.path.join(base, 'build', 'src.aarch64-linux-android-3.11',
+                         'numpy', 'core', 'include', 'numpy'),
+            os.path.join(base, 'numpy', 'core', 'include', 'numpy'),
+        ]
+        for out_dir in targets:
+            os.makedirs(out_dir, exist_ok=True)
+            dst = os.path.join(out_dir, 'config.h')
+            with open(dst, 'w') as handle:
+                handle.write(content)
+            info('numpy: wrote {}'.format(dst))
 
     @staticmethod
     def _write_npy_fpmath_h(base, info):

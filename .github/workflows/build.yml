@@ -40,7 +40,14 @@ env:
 jobs:
   # ---------------------------------------------------------------- flowy AAR
   flowy:
-    runs-on: ubuntu-24.04-arm
+    # x86_64, deliberately. The arm runner cannot host the Android SDK:
+    # Google publishes build-tools only for linux/windows/macos *x86_64*
+    # (build-tools_r37_linux.zip, no arm64 variant), so buildozer's
+    # _check_aidl() execs an x86_64 `aidl` and dies with
+    #   OSError: [Errno 8] Exec format error: .../build-tools/37.0.0/aidl
+    # p4a cross-compiles for arm64-v8a from any host, so the target arch is
+    # unaffected; only the toolchain host changes.
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
@@ -171,7 +178,7 @@ jobs:
     # tree under flowy/.buildozer/... (acados headers, capnp c++/src, libzmq
     # include, python3 Include, numpy/core/include). Those only exist after the
     # flowy job has run python-for-android, so this must wait for it.
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     needs: [flowy]
     steps:

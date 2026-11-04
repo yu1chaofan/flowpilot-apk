@@ -54,46 +54,74 @@ class NumpyCompatRecipe(NumpyRecipe):
 
     name = 'numpy'
     def _patch_build_ext_customize(self, arch):
-        """Give the plain distutils compiler the numpy.distutils methods.
+        """Rewrite build_ext.py so it never calls the missing helpers.
 
         numpy.distutils attaches customize() / customize_cmd() /
-        show_customization() to *its* CCompiler class via replace_method(), but
-        new_compiler() inside the build commands can return plain setuptools'
-        UnixCCompiler, which never received them. Every call site then dies:
+        show_customization() to *its own* CCompiler class, but the command gets
+        whatever new_compiler() returns -- under p4a that is setuptools'
+        UnixCCompiler, which never received them:
 
             AttributeError: 'UnixCCompiler' object has no attribute 'customize'
             AttributeError: 'UnixCCompiler' object has no attribute 'customize_cmd'
             AttributeError: 'UnixCCompiler' object has no attribute 'show_customization'
 
-        Patching the call sites one by one kept surfacing the next spelling
-        (self.compiler.x vs compiler.x, with and without need_cxx=). Installing
-        the three methods on the compiler class once is the actual fix: the
-        behaviour is distutils' own customize_compiler(), which is the real
-        work behind numpy's wrappers; the other two only record bookkeeping or
-        log, and are correctly no-ops here.
+        Monkeypatching the class does not help because setup.py runs in a child
+        interpreter; editing the file is interpreter-independent. Every call is
+        rewritten to a getattr() guard, and customize() falls back to distutils'
+        customize_compiler() -- the routine numpy's wrapper delegates to. The
+        other two only record bookkeeping / log, so skipping them is faithful.
         """
+        import os
+        import re
         from pythonforandroid.logger import info
-        from distutils.ccompiler import CCompiler
-        from distutils.sysconfig import customize_compiler
 
-        if getattr(CCompiler, '_p4a_numpy_hooks', False):
-            info('numpy: compiler hooks already installed')
+        path = os.path.join(self.get_build_dir(arch.arch), 'numpy', 'distutils',
+                            'command', 'build_ext.py')
+        if not os.path.exists(path):
+            info('numpy: build_ext.py not found, skipping hook patch')
             return
+        with open(path) as handle:
+            text = handle.read()
+        original = text
 
-        def _customize(self, dist, need_cxx=0):
-            customize_compiler(self)
+        guard = ('{i}_cz = getattr({t}, "{m}", None)\n'
+                 '{i}if _cz is not None:\n'
+                 '{i}    _cz({args})\n')
 
-        def _customize_cmd(self, cmd):
-            return None
+        def _customize(match):
+            indent, target = match.group(1), match.group(2)
+            return (indent + '_cz = getattr({0}, "customize", None)\n'.format(target)
+                    + indent + 'if _cz is not None:\n'
+                    + indent + '    _cz(self.distribution)\n'
+                    + indent + 'else:\n'
+                    + indent + '    from distutils.sysconfig import customize_compiler\n'
+                    + indent + '    customize_compiler({0})\n'.format(target))
 
-        def _show_customization(self):
-            return None
+        def _cmd(match):
+            indent, target = match.group(1), match.group(2)
+            return (indent + '_cz = getattr({0}, "customize_cmd", None)\n'.format(target)
+                    + indent + 'if _cz is not None:\n'
+                    + indent + '    _cz(self)\n')
 
-        CCompiler.customize = _customize
-        CCompiler.customize_cmd = _customize_cmd
-        CCompiler.show_customization = _show_customization
-        CCompiler._p4a_numpy_hooks = True
-        info('numpy: installed customize/customize_cmd/show_customization on CCompiler')
+        def _show(match):
+            indent, target = match.group(1), match.group(2)
+            return (indent + '_cz = getattr({0}, "show_customization", None)\n'.format(target)
+                    + indent + 'if _cz is not None:\n'
+                    + indent + '    _cz()\n')
+
+        text, n1 = re.subn(
+            r'(?m)^(\s*)([A-Za-z_][\w.]*)\.customize\(self\.distribution[^)]*\)\n',
+            _customize, text)
+        text, n2 = re.subn(
+            r'(?m)^(\s*)([A-Za-z_][\w.]*)\.customize_cmd\([^)]*\)\n', _cmd, text)
+        text, n3 = re.subn(
+            r'(?m)^(\s*)([A-Za-z_][\w.]*)\.show_customization\(\)\n', _show, text)
+
+        if text != original:
+            with open(path, 'w') as handle:
+                handle.write(text)
+        info('numpy: build_ext.py guarded customize={} customize_cmd={} '
+             'show_customization={}'.format(n1, n2, n3))
 
     def get_recipe_env(self, arch=None, with_flags_in_cc=True):
         """Ship the compiler-hook shim to the setup.py subprocess.

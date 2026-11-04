@@ -128,37 +128,63 @@ class NumpyCompatRecipe(NumpyRecipe):
 
     @staticmethod
     def _write_npy_config_h(base, dst, info):
-        """Let numpy render npy_config.h with the real host/target values.
+        """Render npy_config.h without importing numpy from its source tree.
 
-        npy_config.h is produced by numpy.distutils.misc_util.generate_config_h()
-        during build_src; that pass emits nothing in this build, so call the
-        same function directly. Substituting constants by hand is not an option
-        -- the header carries SIZEOF_* and HAVE_* results that must match what
-        the cross compiler just probed.
+        numpy generates this header in build_src via
+        numpy.distutils.misc_util.generate_config_h(); that pass emits nothing
+        in this build, and calling the helper from a subprocess fails with
+        "You should not try to import numpy from its source directory".
+
+        The template itself is a flat list of ``@NAME@`` placeholders, so its
+        substitution table is rebuilt here from numpy/core/setup_common.py,
+        which is data-only (no numpy import).  Values that only a live
+        compiler probe can decide stay at their "absent" spelling, which is
+        what numpy's own #ifdef chains expect.
         """
         import os
-        import subprocess
-        import sys
+        import re
 
-        script = (
-            'import sys, os\n'
-            'sys.path.insert(0, os.getcwd())\n'
-            'from numpy.distutils.misc_util import generate_config_h\n'
-            'from numpy.distutils.conv_template import process_file\n'
-            'generate_config_h(%r)\n'
-            % dst
-        )
-        try:
-            out = subprocess.run([sys.executable, '-c', script], cwd=base,
-                                 capture_output=True, text=True, timeout=300)
-        except Exception as exc:  # pragma: no cover - defensive
-            info('numpy: generate_config_h failed: {}'.format(exc))
+        tpl = os.path.join(base, 'numpy', 'core', 'include', 'numpy',
+                           'npy_config.h.src')
+        if not os.path.exists(tpl):
+            info('numpy: no npy_config.h.src at {}'.format(tpl))
             return
-        if os.path.exists(dst):
-            info('numpy: wrote {} ({} bytes)'.format(dst, os.path.getsize(dst)))
-        else:
-            info('numpy: generate_config_h produced nothing; rc={} err={}'
-                 .format(out.returncode, (out.stderr or '')[-400:]))
+
+        # setup_common is importable on its own: it only uses copy/sys/re.
+        common = os.path.join(base, 'numpy', 'core', 'setup_common.py')
+        subs = {}
+        if os.path.exists(common):
+            ns = {}
+            try:
+                exec(compile(open(common).read(), common, 'exec'), ns)
+            except Exception as exc:
+                info('numpy: setup_common exec failed: {}'.format(exc))
+            for key, value in ns.items():
+                if not isinstance(key, str):
+                    continue
+                if key.isupper() and isinstance(value, (str, int)):
+                    subs[key] = value
+
+        # Architecture facts for arm64 that numpy would otherwise probe.
+        subs.setdefault('SIZEOF_LONG', '8')
+        subs.setdefault('SIZEOF_INT', '4')
+        subs.setdefault('SIZEOF_FLOAT', '4')
+        subs.setdefault('SIZEOF_DOUBLE', '8')
+        subs.setdefault('SIZEOF_LONG_DOUBLE', '16')
+        subs.setdefault('SIZEOF_PYTHON_OBJECT', '4')
+        subs.setdefault('SIZEOF_FLOAT128', '0')
+        subs.setdefault('SIZEOF_OFF_T', '8')
+        subs.setdefault('SIZEOF_PY_LONG_LONG', '8')
+
+        text = open(tpl).read()
+
+        def repl(match):
+            name = match.group(1)
+            return str(subs.get(name, '0'))
+
+        text = re.sub(r'@([A-Za-z0-9_]+)@', repl, text)
+        open(dst, 'w').write(text)
+        info('numpy: wrote {} ({} bytes)'.format(dst, os.path.getsize(dst)))
 
     patches = [
         join(P4A_PATCH_DIR, 'remove-default-paths.patch'),

@@ -343,6 +343,7 @@ class NumpyCompatRecipe(NumpyRecipe):
 #define NPY_SIZEOF_LONGLONG 8
 
 #define NPY_HAVE_LDOUBLE_IEEE_QUAD_LE 1
+#define HAVE_LDOUBLE_IEEE_QUAD_LE 1
 
 #define NPY_HAVE_ENDIAN_H 1
 #define NPY_HAVE_DECL_ISNAN 1
@@ -519,6 +520,7 @@ class NumpyCompatRecipe(NumpyRecipe):
 
 #if !defined(NPY_HAVE_LDOUBLE_IEEE_QUAD_LE)
 #define NPY_HAVE_LDOUBLE_IEEE_QUAD_LE 1
+#define HAVE_LDOUBLE_IEEE_QUAD_LE 1
 #endif
 
 #endif /* NUMPY_CORE_INCLUDE_NUMPY_NPY_FPMATH_H_ */
@@ -695,6 +697,13 @@ class NumpyCompatRecipe(NumpyRecipe):
 
 /* npy_math_internal.h spells this without the second underscore. */
 #define NPY_SIZEOF_LONGLONG 8
+
+/* npy_math_private.h selects its long-double bit layout with the UNPREFIXED
+   name (see #elif defined(HAVE_LDOUBLE_IEEE_QUAD_LE)); the NPY_ prefixed form
+   is the public-API spelling and does not drive the choice. Without this,
+   none of the LDBL_*_INDEX macros get defined and ieee754.c fails with
+   "use of undeclared identifier 'LDBL_MANL_INDEX'". */
+#define HAVE_LDOUBLE_IEEE_QUAD_LE 1
 
 #define NPY_POLYLIKE 1
 #define NPY_USE_C99_COMPLEX 1

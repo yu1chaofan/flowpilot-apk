@@ -139,8 +139,10 @@ class NumpyCompatRecipe(NumpyRecipe):
             info('numpy: config header dir {}'.format(inc_dir))
             os.makedirs(inc_dir, exist_ok=True)
             cfg = os.path.join(inc_dir, 'npy_config.h')
-            if not os.path.exists(cfg):
-                self._write_npy_config_h(base, cfg, info)
+            # Always rewrite: the recipe is the single source of truth for this
+            # header, and leaving a stale copy in a cached build tree is how a
+            # fixed macro set silently kept failing.
+            self._write_npy_config_h(base, cfg, info)
 
         self._write_npy_fpmath_h(base, info)
 
@@ -346,10 +348,9 @@ class NumpyCompatRecipe(NumpyRecipe):
         for out_dir in targets:
             os.makedirs(out_dir, exist_ok=True)
             dst = os.path.join(out_dir, 'npy_fpmath.h')
-            if not os.path.exists(dst):
-                with open(dst, 'w') as handle:
-                    handle.write(content)
-                info('numpy: wrote {}'.format(dst))
+            with open(dst, 'w') as handle:
+                handle.write(content)
+            info('numpy: wrote {}'.format(dst))
 
     @staticmethod
     def _write_npy_config_h(base, dst, info):

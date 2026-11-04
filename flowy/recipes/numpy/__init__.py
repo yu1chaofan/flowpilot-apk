@@ -494,6 +494,10 @@ class NumpyCompatRecipe(NumpyRecipe):
 #ifndef NUMPY_CORE_INCLUDE_NUMPY_NPY_CONFIG_H_
 #define NUMPY_CORE_INCLUDE_NUMPY_NPY_CONFIG_H_
 
+/* numpy's real npy_config.h starts by pulling in the generated config.h; the
+   SIZEOF_* macros below are what _numpyconfig.h re-exports as NPY_SIZEOF_*. */
+#include "config.h"
+
 /* Generated for aarch64-linux-android (arm64-v8a, NDK r25b clang, libc++).
    AArch64 LP64 data model: char 1, short 2, int 4, long 8, long long 8,
    float 4, double 8, long double 16 (IEEE binary128 in clang/NDK),

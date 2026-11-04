@@ -204,39 +204,47 @@ class NumpyCompatRecipe(NumpyRecipe):
 
     @staticmethod
     def _expand_c_templates(base, info):
-        """Expand numpy's .h.src / .c.src templates in the source tree.
+        """Expand numpy's .src templates with numpy's own processor.
 
-        numpy runs every npymath header and source through
-        numpy.distutils.conv_template.process_file() during build_src, turning
-        the @TYPE@/@@ markers into the concrete C. That pass emits nothing in
-        this build, so the compiler ends up reading the raw templates:
+        numpy's npymath headers use the "from_template" dialect, not the plain
+        @VAR@ substitution of conv_template: markers like
 
-            npy_math_internal.h.src:599:
-            #define NPY__FP_SFX(X) NPY_CAT(X, f)
+            NPY_INPLACE @type@ npy_@kind@@c@(@type@ x)
 
-        which fails because the generated half of the file (the part that
-        defines NPY_CAT and the per-precision symbol names) never exists.
+        are expanded once per precision (float, double, long double) and the
+        results concatenated. numpy does this through
+        numpy.distutils.from_template.process_file(), so call that instead of
+        hand-substituting -- a naive single pass leaves literal "@type@" in the
+        generated header and the compiler reports
 
-        process_file(path) rewrites the file in place when called with one
-        argument, which is exactly what numpy's own build does; call it on a
-        copy so the pristine template stays available for the next run.
+            npy_math_internal.h:627:13: error: expected identifier or '('
         """
         import os
+        import re
         import shutil
+        import importlib.util
 
         conv = os.path.join(base, 'numpy', 'distutils', 'conv_template.py')
-        if not os.path.exists(conv):
-            info('numpy: conv_template.py missing, cannot expand templates')
+        fromtpl = os.path.join(base, 'numpy', 'distutils', 'from_template.py')
+        if not os.path.exists(fromtpl):
+            info('numpy: from_template.py missing, cannot expand templates')
+            return
+        spec = importlib.util.spec_from_file_location('_np_from_tpl', fromtpl)
+        from_mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(from_mod)
+        except Exception as exc:
+            info('numpy: from_template import failed: {}'.format(exc))
             return
 
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('_np_conv', conv)
-        mod = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(mod)
-        except Exception as exc:
-            info('numpy: conv_template import failed: {}'.format(exc))
-            return
+        conv_mod = None
+        if os.path.exists(conv):
+            spec2 = importlib.util.spec_from_file_location('_np_conv', conv)
+            conv_mod = importlib.util.module_from_spec(spec2)
+            try:
+                spec2.loader.exec_module(conv_mod)
+            except Exception:
+                conv_mod = None
 
         expanded = 0
         for root in ('include', 'src'):
@@ -245,19 +253,48 @@ class NumpyCompatRecipe(NumpyRecipe):
                 continue
             for dirpath, _dirnames, filenames in os.walk(top):
                 for name in filenames:
-                    if not name.endswith(('.h.src', '.c.src')):
+                    if not name.endswith('.src'):
                         continue
                     src = os.path.join(dirpath, name)
-                    dst = src[:-4]  # strip .src
-                    if os.path.exists(dst) and name.endswith('.h.src'):
-                        # A plain header may already exist and take precedence.
+                    dst = src[:-4]
+                    if os.path.exists(dst):
                         continue
+                    text = None
                     try:
-                        shutil.copyfile(src, dst)
-                        mod.process_file(dst)
-                        expanded += 1
+                        with open(src) as handle:
+                            raw = handle.read()
+                        # @type@/@@ style templates need from_template; plain
+                        # @NAME@ placeholders need conv_template.
+                        if '@@' in raw or re.search(r'@(type|c|kind)@', raw):
+                            # from_template.process_file has flip-flopped
+                            # between (target) and (target, source) across
+                            # releases; try in-place first, then the 1-arg form.
+                            shutil.copyfile(src, dst)
+                            done = False
+                            try:
+                                from_mod.process_file(dst)
+                                done = True
+                            except TypeError:
+                                try:
+                                    from_mod.process_file(dst, src)
+                                    done = True
+                                except TypeError:
+                                    done = False
+                            if not done:
+                                os.unlink(dst)
+                                continue
+                            with open(dst) as handle:
+                                text = handle.read()
+                        elif conv_mod is not None:
+                            shutil.copyfile(src, dst)
+                            conv_mod.process_file(dst)
                     except Exception as exc:
                         info('numpy: template {} failed: {}'.format(name, exc))
+                        if os.path.exists(dst):
+                            os.unlink(dst)
+                        continue
+                    if os.path.exists(dst):
+                        expanded += 1
         info('numpy: expanded {} .src templates'.format(expanded))
 
     @staticmethod

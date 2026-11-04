@@ -73,6 +73,11 @@ class CapnpRecipe(Recipe):
                     'libkj.la', 'libkj-async.la', 'libkj-http.la',
                     'libcapnp.la', 'libcapnp-rpc.la', 'libcapnp-json.la',
                     'libcapnp-websocket.la',
+                    # pycapnp's setup.py links -lcapnpc unconditionally (it is
+                    # the schema-compiler support library). Without it:
+                    #   ld: error: unable to find library -lcapnpc
+                    #   clang-14: error: linker command failed with exit code 1
+                    'libcapnpc.la',
                     _env=env)
             # Copy the freshly linked shared objects out of .libs.
             #

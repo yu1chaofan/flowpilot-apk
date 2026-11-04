@@ -54,87 +54,65 @@ class NumpyCompatRecipe(NumpyRecipe):
 
     name = 'numpy'
     def _patch_build_ext_customize(self, arch):
-        """Belt-and-braces for build_ext.compiler.customize.
+        """Give the plain distutils compiler the numpy.distutils methods.
 
-        numpy/distutils/command/build_ext.py calls
-            self.compiler.customize(self.distribution)
-        but numpy.distutils only attaches that method to its own CCompiler
-        class via replace_method(); the object in hand is often plain
-        setuptools' UnixCCompiler:
+        numpy.distutils attaches customize() / customize_cmd() /
+        show_customization() to *its* CCompiler class via replace_method(), but
+        new_compiler() inside the build commands can return plain setuptools'
+        UnixCCompiler, which never received them. Every call site then dies:
+
             AttributeError: 'UnixCCompiler' object has no attribute 'customize'
-        The patch file handles the normal case; this rewrite covers the case
-        where the patch did not apply (context drift) so the build still moves.
+            AttributeError: 'UnixCCompiler' object has no attribute 'customize_cmd'
+            AttributeError: 'UnixCCompiler' object has no attribute 'show_customization'
+
+        Patching the call sites one by one kept surfacing the next spelling
+        (self.compiler.x vs compiler.x, with and without need_cxx=). Installing
+        the three methods on the compiler class once is the actual fix: the
+        behaviour is distutils' own customize_compiler(), which is the real
+        work behind numpy's wrappers; the other two only record bookkeeping or
+        log, and are correctly no-ops here.
         """
-        import os
         from pythonforandroid.logger import info
+        from distutils.ccompiler import CCompiler
+        from distutils.sysconfig import customize_compiler
 
-        path = os.path.join(self.get_build_dir(arch.arch), 'numpy', 'distutils',
-                            'command', 'build_ext.py')
-        if not os.path.exists(path):
+        if getattr(CCompiler, '_p4a_numpy_hooks', False):
+            info('numpy: compiler hooks already installed')
             return
-        with open(path) as handle:
-            text = handle.read()
-        changed = 0
-        # Three numpy.distutils hooks that only exist on numpy's own CCompiler
-        # class (attached via replace_method), not on setuptools'
-        # UnixCCompiler -- which is what new_compiler() hands back here:
-        #   customize()     -> customize_compiler()
-        #   customize_cmd() -> nothing (it only records command bookkeeping)
-        #   show_customization() -> nothing (logging only)
-        substitutions = [
-            ('        self.compiler.customize(self.distribution)\n',
-             '        _customize = getattr(self.compiler, "customize", None)\n'
-             '        if _customize is not None:\n'
-             '            _customize(self.distribution)\n'
-             '        else:\n'
-             '            from distutils.sysconfig import customize_compiler\n'
-             '            customize_compiler(self.compiler)\n'),
-            ('        self.compiler.customize_cmd(self)\n',
-             '        _customize_cmd = getattr(self.compiler, "customize_cmd", None)\n'
-             '        if _customize_cmd is not None:\n'
-             '            _customize_cmd(self)\n'),
-        ]
-        # show_customization() is indented differently across numpy releases,
-        # so it is matched by pattern rather than by an exact line.
-        import re as _re
-        for needle, replacement in substitutions:
-            if needle in text:
-                text = text.replace(needle, replacement, 1)
-                changed += 1
 
-        def _drop_show(match):
-            indent = match.group(1)
-            return (indent + '_show = getattr(self.compiler, "show_customization", None)\n'
-                    + indent + 'if _show is not None:\n'
-                    + indent + '    _show()\n')
+        def _customize(self, dist, need_cxx=0):
+            customize_compiler(self)
 
-        text, n = _re.subn(r'(?m)^(\s*)self\.compiler\.show_customization\(\)\n',
-                           _drop_show, text)
-        changed += n
+        def _customize_cmd(self, cmd):
+            return None
 
-        # Any remaining `<obj>.customize(self.distribution ...)` call, whatever
-        # local name the command uses to reach the compiler (build_ext uses both
-        # `self.compiler` and a bare `compiler`). Each is a chance for:
-        #   AttributeError: 'UnixCCompiler' object has no attribute 'customize'
-        def _guard_customize(match):
-            indent, target = match.group(1), match.group(2)
-            return (indent + '_cz = getattr({0}, "customize", None)\n'.format(target)
-                    + indent + 'if _cz is not None:\n'
-                    + indent + '    _cz(self.distribution)\n'
-                    + indent + 'else:\n'
-                    + indent + '    from distutils.sysconfig import customize_compiler\n'
-                    + indent + '    customize_compiler({0})\n'.format(target))
+        def _show_customization(self):
+            return None
 
-        text, n2 = _re.subn(
-            r'(?m)^(\s*)([A-Za-z_][\w.]*)\.customize\(self\.distribution[^)]*\)\n',
-            _guard_customize, text)
-        changed += n2
-        if not changed:
-            info('numpy: build_ext.py already handled')
-            return
-        with open(path, 'w') as handle:
-            handle.write(text)
-        info('numpy: patched {} build_ext.py compiler hooks'.format(changed))
+        CCompiler.customize = _customize
+        CCompiler.customize_cmd = _customize_cmd
+        CCompiler.show_customization = _show_customization
+        CCompiler._p4a_numpy_hooks = True
+        info('numpy: installed customize/customize_cmd/show_customization on CCompiler')
+
+    def get_recipe_env(self, arch=None, with_flags_in_cc=True):
+        """Ship the compiler-hook shim to the setup.py subprocess.
+
+        build_arch installs the missing methods on distutils' CCompiler, but
+        numpy's build runs in a *child* interpreter (hostpython setup.py
+        build_ext), so the patch has to travel with the environment. A
+        sitecustomize.py on PYTHONPATH is executed automatically at startup.
+        """
+        env = super().get_recipe_env(arch, with_flags_in_cc)
+        import os
+        import shutil
+        shim_dir = os.path.join(self.get_build_dir(arch.arch), '.p4a_shim')
+        os.makedirs(shim_dir, exist_ok=True)
+        src_shim = os.path.join(dirname(__file__), 'compiler_shim.py')
+        shutil.copyfile(src_shim, os.path.join(shim_dir, 'sitecustomize.py'))
+        existing = env.get('PYTHONPATH', '')
+        env['PYTHONPATH'] = shim_dir + (os.pathsep + existing if existing else '')
+        return env
 
     def build_arch(self, arch, **kwargs):
         """Probe the npymath include path before numpy compiles anything.

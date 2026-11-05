@@ -170,6 +170,7 @@ class NumpyCompatRecipe(NumpyRecipe):
         """
         self._ensure_npymath_headers(arch)
         self._patch_build_ext_customize(arch)
+        self._patch_ccompiler_opt(arch)
         return super().build_arch(arch, **kwargs)
 
     def _ensure_npymath_headers(self, arch):
@@ -339,23 +340,58 @@ class NumpyCompatRecipe(NumpyRecipe):
         with open(shim) as handle:
             text = handle.read()
         if '@targets' in text:
-            # parse_targets() insists on a C comment carrying @targets; an
-            # empty list neutralises dispatch without tripping that check:
-            #   error: CCompilerOpt.parse_targets[1801] : expected to find
-            #     '@targets' within a C comment
-            neutral = (
-                "/*\n"
-                " * p4a: CPU dispatch disabled for numpy.core._umath_tests.\n"
-                " * build_src is inert in this build, so the generated\n"
-                " * per-feature objects never exist. An empty @targets list\n"
-                " * keeps the parser happy and compiles only the plain\n"
-                " * translation unit.\n"
-                " * @targets $\n"
-                " */\n"
-                '#include "_umath_tests.c"\n')
-            with open(shim, 'w') as handle:
-                handle.write(neutral)
+            # Leave the file exactly as numpy wrote it. Patching the shim
+            # contents is a dead end -- every neutral form trips a different
+            # parser check:
+            #   parse_targets[1801]: expected to find '@targets' within a C
+            #     comment          (file without the directive)
+            #   _parse_target_tokens[1931]: invalid target name '$'
+            #     (empty @targets list)
+            # Disabling dispatch belongs one level up, in ccompiler_opt, which
+            # is patched in _patch_ccompiler_opt().
+            pass
             info('numpy: neutralised _umath_tests.dispatch.c')
+
+    def _patch_ccompiler_opt(self, arch):
+        """Turn numpy's CPU-dispatch off at the source.
+
+        The dispatch machiner: numpy/distutils/ccompiler_opt.py reads an
+        ``@targets`` directive out of each *.dispatch.c file and emits one
+        generated translation unit per CPU feature. Those generated units are
+        the only ones added to the compile plan, while the linker still expects
+        the base object produced by build_src:
+
+            no such file or directory:
+              'build/temp.../numpy/core/src/umath/_umath_tests.o'
+
+        With build_src inert the two sides can never agree. Making
+        parse_targets() return an empty list removes dispatch from the equation
+        entirely; numpy then compiles the plain translation units that are
+        already mirrored into build/src.<plat>/.
+        """
+        import os
+        from pythonforandroid.logger import info
+
+        path = os.path.join(self.get_build_dir(arch.arch), 'numpy', 'distutils',
+                            'ccompiler_opt.py')
+        if not os.path.exists(path):
+            info('numpy: ccompiler_opt.py not found')
+            return
+        with open(path) as handle:
+            text = handle.read()
+        needle = '    def parse_targets(self, source):\n'
+        if needle not in text:
+            info('numpy: ccompiler_opt.parse_targets not found')
+            return
+        patch = (needle
+                 + '        # p4a: CPU dispatch disabled -- see the numpy recipe.\n'
+                 + '        # The generated per-feature objects are never produced\n'
+                 + '        # in this build, so nothing may reference them.\n'
+                 + '        return [], []\n')
+        text = text.replace(needle, patch, 1)
+        with open(path, 'w') as handle:
+            handle.write(text)
+        info('numpy: parse_targets() disabled (no CPU dispatch)')
 
     @staticmethod
     def _mirror_numpy_headers(base, info):

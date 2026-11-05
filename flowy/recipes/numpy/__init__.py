@@ -316,7 +316,38 @@ class NumpyCompatRecipe(NumpyRecipe):
                             copied += 1
                         except OSError:
                             pass
-        info('numpy: mirrored {} files into build/src.*'.format(copied))
+        # Force every mirrored file to look freshly written. distutils'
+        # compiler.compile() skips a translation unit when the .o appears newer
+        # than its source, and copies made by build_src (or by us) can carry an
+        # older mtime than a stale object left in the build tree -- which is
+        # exactly how _umath_tests.o ended up referenced but never produced.
+        import time
+        now = time.time()
+        touched = 0
+        for dest_root in dest_roots:
+            for dirpath, _dirnames, filenames in os.walk(dest_root):
+                for name in filenames:
+                    try:
+                        os.utime(os.path.join(dirpath, name), (now, now))
+                        touched += 1
+                    except OSError:
+                        pass
+        # Drop stale objects: anything left over from a previous attempt would
+        # otherwise satisfy distutils' up-to-date check and mask the freshly
+        # mirrored sources.
+        removed = 0
+        temp_root = os.path.join(build_root, 'temp.aarch64-linux-android-cpython-311')
+        if os.path.isdir(temp_root):
+            for dirpath, _dirnames, filenames in os.walk(temp_root):
+                for name in filenames:
+                    if name.endswith('.o'):
+                        try:
+                            os.unlink(os.path.join(dirpath, name))
+                            removed += 1
+                        except OSError:
+                            pass
+        info('numpy: mirrored {} files into build/src.* (touched {}, dropped {} stale objects)'.format(
+            copied, touched, removed))
 
     @staticmethod
     def _drop_broken_dispatch(base, info):

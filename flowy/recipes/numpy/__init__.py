@@ -142,6 +142,14 @@ class NumpyCompatRecipe(NumpyRecipe):
         # Disabling optimisation skips dispatch generation entirely; the plain
         # baseline build is what the NDK toolchain produces anyway.
         env['NPY_DISABLE_OPTIMIZATION'] = '1'
+        # Belt and braces: the dispatch generator reads this variable too.
+        env['NPY_DISABLE_CPU_FEATURES'] = (
+            'SSE SSE2 SSE3 SSSE3 SSE41 SSE42 AVX AVX2 FMA3 FMA4 XOP AVX512F '
+            'AVX512CD AVX512_KNL AVX512_KNM AVX512_SKX AVX512_CLX AVX512_CNL '
+            'AVX512_ICL VSX VSX2 VSX3 VSX4 ASIMD ASIMDHP ASIMDDP ASIMDVT '
+            'ASIMDBF16 NEON NEON_FP16 NEON_VFPV4')
+        env['NPY_BLAS_ORDER'] = ''
+        env['NPY_LAPACK_ORDER'] = ''
         import os
         import shutil
         shim_dir = os.path.join(self.get_build_dir(arch.arch), '.p4a_shim')

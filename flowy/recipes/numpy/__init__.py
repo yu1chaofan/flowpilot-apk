@@ -339,11 +339,19 @@ class NumpyCompatRecipe(NumpyRecipe):
         with open(shim) as handle:
             text = handle.read()
         if '@targets' in text:
+            # parse_targets() insists on a C comment carrying @targets; an
+            # empty list neutralises dispatch without tripping that check:
+            #   error: CCompilerOpt.parse_targets[1801] : expected to find
+            #     '@targets' within a C comment
             neutral = (
-                '/* p4a: CPU dispatch disabled for numpy.core._umath_tests.'
-                ' * build_src is inert here, so the generated per-feature'
-                ' * objects never exist and nothing may depend on them.'
-                ' * Compiling the plain translation unit is enough. */\n'
+                "/*\n"
+                " * p4a: CPU dispatch disabled for numpy.core._umath_tests.\n"
+                " * build_src is inert in this build, so the generated\n"
+                " * per-feature objects never exist. An empty @targets list\n"
+                " * keeps the parser happy and compiles only the plain\n"
+                " * translation unit.\n"
+                " * @targets $\n"
+                " */\n"
                 '#include "_umath_tests.c"\n')
             with open(shim, 'w') as handle:
                 handle.write(neutral)

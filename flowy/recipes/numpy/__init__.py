@@ -436,23 +436,20 @@ class NumpyCompatRecipe(NumpyRecipe):
         info('numpy: parse_targets() disabled (no CPU dispatch)')
 
     def _fix_umath_tests_sources(self, arch, info):
-        """Point numpy.core._umath_tests at its real translation unit.
+        """Drop numpy.core._umath_tests from the build.
 
-        numpy/core/setup.py hands the extension this source list:
-
-            config.add_extension('numpy.core._umath_tests',
-                sources=['src/umath/_umath_tests.dispatch.c'], ...)
-
-        The dispatch shim is supposed to expand into per-feature files *and*
-        leave the base object compiled, but on aarch64 only the ASIMDHP variant
-        survives and the base is never built, so the link fails:
+        numpy/core/setup.py registers this extension with a dispatch source
+        list. On aarch64 numpy 1.22.3 keeps only the ASIMDHP variant and never
+        emits the base object, so the link fails with:
 
             error: no such file or directory:
               'build/temp.../numpy/core/src/umath/_umath_tests.o'
 
-        Rewriting the source list to the plain translation unit removes the
-        dispatch indirection for this one extension. The shim only forwards to
-        that file anyway, so the resulting extension is the same code.
+        Rewriting the source list does not help: build_ext re-derives the list
+        from the dispatch config. _umath_tests is numpy's internal test
+        extension -- nothing in numpy's import path, and certainly nothing in
+        flowpilot, references it -- so dropping the extension entirely is
+        correct here and removes the only unit that cannot be built.
         """
         import os
         import re
@@ -464,16 +461,27 @@ class NumpyCompatRecipe(NumpyRecipe):
             return
         with open(path) as handle:
             text = handle.read()
-        before = text
-        text = re.sub(
-            r"sources=\['src/umath/_umath_tests\.dispatch\.c'\]",
-            "sources=['src/umath/_umath_tests.c']", text)
-        if text != before:
-            with open(path, 'w') as handle:
-                handle.write(text)
-            info('numpy: _umath_tests sources -> _umath_tests.c')
-        else:
-            info('numpy: _umath_tests sources already plain')
+        if '_umath_tests' not in text:
+            info('numpy: _umath_tests already absent from core/setup.py')
+            return
+        # Comment out the add_extension call rather than deleting lines, so the
+        # surrounding structure and line numbers stay intact.
+        pattern = re.compile(
+            r"(?ms)^(\s*)config\.add_extension\(\s*'numpy\.core\._umath_tests'.*?\)\s*$")
+
+        def _comment(match):
+            body = match.group(0)
+            indent = match.group(1)
+            commented = "\n".join(
+                indent + "# p4a: dropped (dispatch takes no base object) " + line[len(indent):]
+                if line.strip() else line
+                for line in body.splitlines())
+            return commented
+
+        text, n = pattern.subn(_comment, text)
+        with open(path, 'w') as handle:
+            handle.write(text)
+        info('numpy: _umath_tests extension dropped ({})'.format(n))
 
     @staticmethod
     def _mirror_numpy_headers(base, info):

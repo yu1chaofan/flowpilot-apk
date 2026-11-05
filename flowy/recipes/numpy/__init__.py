@@ -387,7 +387,7 @@ class NumpyCompatRecipe(NumpyRecipe):
                  + '        # p4a: CPU dispatch disabled -- see the numpy recipe.\n'
                  + '        # The generated per-feature objects are never produced\n'
                  + '        # in this build, so nothing may reference them.\n'
-                 + '        return [], []\n')
+                 + '        return False, [], []\n')
         text = text.replace(needle, patch, 1)
         with open(path, 'w') as handle:
             handle.write(text)

@@ -161,16 +161,22 @@ class NumpyCompatRecipe(NumpyRecipe):
         return env
 
     def build_arch(self, arch, **kwargs):
-        """Probe the npymath include path before numpy compiles anything.
+        """Prepare the numpy source tree, then run p4a's normal build.
+
+        Everything here compensates for one fact: numpy's build_src pass emits
+        no generated sources or headers in this environment (see the individual
+        helpers), so the tree has to be put into the shape build_ext expects.
 
         p4a's ``Prebuilding numpy ... / numpy has no prebuild_arm64_v8a,
         skipping`` message shows this recipe class carries no prebuild hook, so
         the earlier prebuild_arch() here never ran. Do the repair in build_arch
         instead: it is called for every recipe unconditionally.
         """
+        from pythonforandroid.logger import info
+
         self._ensure_npymath_headers(arch)
         self._patch_build_ext_customize(arch)
-        self._patch_ccompiler_opt(arch)
+        self._fix_umath_tests_sources(arch, info)
         return super().build_arch(arch, **kwargs)
 
     def _ensure_npymath_headers(self, arch):
@@ -203,7 +209,12 @@ class NumpyCompatRecipe(NumpyRecipe):
         # names would just move the failure one include further down.
         self._mirror_numpy_headers(base, info)
         self._mirror_numpy_sources(base, info)
-        self._drop_broken_dispatch(base, info)
+        # NOTE: numpy's CPU dispatch is left ENABLED. Disabling it removed the
+        # only producer of the per-feature symbols that __umath_generated.c
+        # references:
+        #   __umath_generated.c:54: use of undeclared identifier 'DOUBLE_cbrt'
+        #   __umath_generated.c:57: use of undeclared identifier 'FLOAT_ceil'
+        pass
 
         source = None
         for name in ('npy_math_private.h', 'npy_math_private.h.src'):
@@ -392,6 +403,46 @@ class NumpyCompatRecipe(NumpyRecipe):
         with open(path, 'w') as handle:
             handle.write(text)
         info('numpy: parse_targets() disabled (no CPU dispatch)')
+
+    def _fix_umath_tests_sources(self, arch, info):
+        """Point numpy.core._umath_tests at its real translation unit.
+
+        numpy/core/setup.py hands the extension this source list:
+
+            config.add_extension('numpy.core._umath_tests',
+                sources=['src/umath/_umath_tests.dispatch.c'], ...)
+
+        The dispatch shim is supposed to expand into per-feature files *and*
+        leave the base object compiled, but on aarch64 only the ASIMDHP variant
+        survives and the base is never built, so the link fails:
+
+            error: no such file or directory:
+              'build/temp.../numpy/core/src/umath/_umath_tests.o'
+
+        Rewriting the source list to the plain translation unit removes the
+        dispatch indirection for this one extension. The shim only forwards to
+        that file anyway, so the resulting extension is the same code.
+        """
+        import os
+        import re
+
+        path = os.path.join(self.get_build_dir(arch.arch), 'numpy', 'core',
+                            'setup.py')
+        if not os.path.exists(path):
+            info('numpy: core/setup.py not found')
+            return
+        with open(path) as handle:
+            text = handle.read()
+        before = text
+        text = re.sub(
+            r"sources=\['src/umath/_umath_tests\.dispatch\.c'\]",
+            "sources=['src/umath/_umath_tests.c']", text)
+        if text != before:
+            with open(path, 'w') as handle:
+                handle.write(text)
+            info('numpy: _umath_tests sources -> _umath_tests.c')
+        else:
+            info('numpy: _umath_tests sources already plain')
 
     @staticmethod
     def _mirror_numpy_headers(base, info):

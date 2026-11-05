@@ -132,6 +132,16 @@ class NumpyCompatRecipe(NumpyRecipe):
         sitecustomize.py on PYTHONPATH is executed automatically at startup.
         """
         env = super().get_recipe_env(arch, with_flags_in_cc)
+        # numpy's CPU-dispatch machinery generates per-feature variants of an
+        # extension's sources (_umath_tests.dispatch.asimdhp.c) and relies on
+        # build_src having materialised the base .c alongside them. With that
+        # pass inert only the variants exist, so the link step looks for an
+        # object that was never compiled:
+        #   no such file or directory:
+        #     'build/temp.../numpy/core/src/umath/_umath_tests.o'
+        # Disabling optimisation skips dispatch generation entirely; the plain
+        # baseline build is what the NDK toolchain produces anyway.
+        env['NPY_DISABLE_OPTIMIZATION'] = '1'
         import os
         import shutil
         shim_dir = os.path.join(self.get_build_dir(arch.arch), '.p4a_shim')

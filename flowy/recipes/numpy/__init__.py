@@ -327,9 +327,27 @@ class NumpyCompatRecipe(NumpyRecipe):
 
         shim = os.path.join(base, 'numpy', 'core', 'src', 'umath',
                             '_umath_tests.dispatch.c')
-        if os.path.exists(shim):
-            os.unlink(shim)
-            info('numpy: removed _umath_tests.dispatch.c (falls back to plain .c)')
+        if not os.path.exists(shim):
+            return
+        # numpy/core/setup.py reads this file to discover @targets, so deleting
+        # it only moved the failure:
+        #   error: [Errno 2] No such file or directory:
+        #     'src/umath/_umath_tests.dispatch.c'
+        # Neutralise it instead: keep the path, drop the @targets directive, so
+        # the dispatch wrapper has nothing to expand and the plain
+        # _umath_tests.c is compiled as the only target.
+        with open(shim) as handle:
+            text = handle.read()
+        if '@targets' in text:
+            neutral = (
+                '/* p4a: CPU dispatch disabled for numpy.core._umath_tests.'
+                ' * build_src is inert here, so the generated per-feature'
+                ' * objects never exist and nothing may depend on them.'
+                ' * Compiling the plain translation unit is enough. */\n'
+                '#include "_umath_tests.c"\n')
+            with open(shim, 'w') as handle:
+                handle.write(neutral)
+            info('numpy: neutralised _umath_tests.dispatch.c')
 
     @staticmethod
     def _mirror_numpy_headers(base, info):

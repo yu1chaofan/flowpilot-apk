@@ -202,6 +202,7 @@ class NumpyCompatRecipe(NumpyRecipe):
         # names would just move the failure one include further down.
         self._mirror_numpy_headers(base, info)
         self._mirror_numpy_sources(base, info)
+        self._drop_broken_dispatch(base, info)
 
         source = None
         for name in ('npy_math_private.h', 'npy_math_private.h.src'):
@@ -304,6 +305,31 @@ class NumpyCompatRecipe(NumpyRecipe):
                         except OSError:
                             pass
         info('numpy: mirrored {} files into build/src.*'.format(copied))
+
+    @staticmethod
+    def _drop_broken_dispatch(base, info):
+        """Remove _umath_tests' dispatch shim.
+
+        numpy 1.22.3's CPU-dispatch machinery generates
+        _umath_tests.dispatch.<feature>.c variants and expects build_src to have
+        produced the base _umath_tests.o alongside them. Under this build the
+        variants compile but the base object is never emitted, so linking
+        numpy.core._umath_tests fails with:
+
+            no such file or directory:
+              'build/temp.../numpy/core/src/umath/_umath_tests.o'
+
+        Deleting the 1 KB dispatch shim makes numpy fall back to compiling
+        _umath_tests.c directly, which is the pre-dispatch behaviour and builds
+        fine without SIMD variants. Nothing else in core references the shim.
+        """
+        import os
+
+        shim = os.path.join(base, 'numpy', 'core', 'src', 'umath',
+                            '_umath_tests.dispatch.c')
+        if os.path.exists(shim):
+            os.unlink(shim)
+            info('numpy: removed _umath_tests.dispatch.c (falls back to plain .c)')
 
     @staticmethod
     def _mirror_numpy_headers(base, info):
